@@ -1,0 +1,11 @@
+# Free, open-source libraries for the saw sound anomaly detector
+numpy>=1.26,<3
+scipy>=1.11
+librosa>=0.10.2
+soundfile>=0.12
+scikit-learn>=1.4
+pandas>=2.1
+matplotlib>=3.8
+jupyter>=1.0
+pytest>=8.0
+imageio-ffmpeg>=0.5   # decodes phone .m4a/.mp3 files (bundles ffmpeg)

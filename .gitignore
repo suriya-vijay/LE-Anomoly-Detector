@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Recordings, the logbook and cached features stay on this computer (never published).
+# The folder structure is kept via the .gitkeep files.
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# Generated
+reports/
+*.pkl

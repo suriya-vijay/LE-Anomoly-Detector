@@ -1,0 +1,11 @@
+{
+  "name": "Saw Sound Meter",
+  "short_name": "Saw Meter",
+  "description": "Listens to the cut-off saw and shows GOOD / ODD / STOP.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111111",
+  "theme_color": "#222222",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

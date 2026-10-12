@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#222">
+  <title>Saw Sound Meter</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-state="idle">
+
+  <main id="meter" class="meter">
+    <div class="meter-top">
+      <span id="phase" class="phase">Not listening</span>
+      <span id="clock" class="clock"></span>
+    </div>
+    <div id="verdict" class="verdict">READY</div>
+    <div id="hint" class="hint">Tap Start, then put the phone on the saw at the tape mark.</div>
+
+    <div class="bar-wrap" aria-label="weirdness meter">
+      <div class="bar">
+        <div id="bar-fill" class="bar-fill"></div>
+        <div id="mark-yellow" class="mark mark-yellow"></div>
+        <div id="mark-red" class="mark mark-red"></div>
+      </div>
+      <div class="bar-labels"><span>normal</span><span id="score">–</span><span>weird</span></div>
+    </div>
+
+    <canvas id="timeline" class="timeline" height="90"></canvas>
+    <div id="cut-banner" class="cut-banner" hidden>Cut finished</div>
+  </main>
+
+  <section id="after-cut" class="panel" hidden>
+    <h2>How was that cut?</h2>
+    <p class="small">Your answer is saved on this phone (sound measurements only, no audio) so the model can be retrained later.</p>
+    <div class="row">
+      <button id="cut-good" class="btn btn-good">That cut was GOOD</button>
+      <button id="cut-odd" class="btn btn-odd">That cut was ODD</button>
+    </div>
+  </section>
+
+  <section class="panel controls">
+    <div class="row">
+      <button id="start" class="btn btn-primary">Start listening</button>
+      <button id="stop" class="btn" hidden>Stop</button>
+    </div>
+    <label class="field">
+      <span>Sensitivity <output id="sens-out">1.0×</output></span>
+      <input id="sensitivity" type="range" min="0.7" max="1.5" step="0.05" value="1">
+      <span class="small">Higher = stricter (more alerts). Reset: <button id="sens-reset" class="link">1.0×</button></span>
+    </label>
+    <div class="row toggles">
+      <label><input id="vibrate" type="checkbox" checked> Vibrate on STOP <span class="small" id="vibrate-note"></span></label>
+      <label><input id="beep" type="checkbox"> Beep on STOP</label>
+    </div>
+    <div id="mic-error" class="error" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2>Saved cuts</h2>
+    <p class="small"><span id="saved-count">0</span> saved on this phone.
+      <button id="download" class="link">Download as a file</button> and drop it into the project folder to retrain.
+      <button id="clear-saved" class="link">Clear</button></p>
+  </section>
+
+  <section class="panel">
+    <h2>Test with a recording</h2>
+    <p class="small">Pick a recording (.m4a or .wav) and the meter will run through it faster than real time, exactly as it would have live.</p>
+    <input id="file" type="file" accept="audio/*,.m4a,.wav,.mp3">
+    <div id="file-result" class="small"></div>
+    <canvas id="file-timeline" class="timeline" height="110" hidden></canvas>
+  </section>
+
+  <footer class="small" id="model-info">Loading model…</footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+"""Report how the detector does on every recording in the logbook.
+
+    python -m src.evaluate
+
+Plain language: every recording gets scored second by second and turned into the
+verdict the phone meter would have shown (GOOD / ODD / STOP). Good cuts used for
+training are scored by a model that never heard them, so the numbers are honest.
+Prints a table and a short summary you can show a supervisor, and saves a
+timeline picture to reports/weirdness.png.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import matplotlib
+import numpy as np
+
+from . import config
+from .detector import GOOD, ODD, STOP, SawDetector
+from .phases import OFF, RUNNING, fmt_time
+from .train import ROOT, leave_one_out_models, leave_one_out_scores, thresholds_from, train
+
+REPORT_PATH = ROOT / "reports" / "weirdness.png"
+COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
+
+
+def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_PATH) -> list[dict]:
+    det, p, _ = train(root, verbose=False)
+    loo_models = leave_one_out_models(p)
+    yellow, red = thresholds_from(leave_one_out_scores(p, loo_models))
+
+    rows = []
+    for r in p.runs:
+        model = loo_models.get(r.filename, det)
+        model.yellow, model.red = yellow, red
+        feats, times = p.feats[r.filename], p.times[r.filename]
+        phases = p.phases[r.filename].copy()
+        phases[~p.usable[r.filename]] = OFF                     # trimmed parts are not judged
+        scores = model.score(feats)
+        verdicts = model.verdicts(scores, phases)
+        judged = phases == RUNNING
+        js = scores[judged]
+        first = {v: (times[verdicts == v][0] if np.any(verdicts == v) else None) for v in (ODD, STOP)}
+        rows.append(dict(
+            run=r, times=times, scores=scores, verdicts=verdicts, phases=phases,
+            unseen=r.filename in loo_models,
+            median=float(np.median(js)) if len(js) else np.nan,
+            max=float(js.max()) if len(js) else np.nan,
+            t_max=float(times[judged][np.argmax(js)]) if len(js) else np.nan,
+            pct_odd=float(np.mean(np.isin(verdicts[judged], [ODD, STOP])) * 100) if len(js) else np.nan,
+            pct_stop=float(np.mean(verdicts[judged] == STOP) * 100) if len(js) else np.nan,
+            first_odd=first[ODD], first_stop=first[STOP],
+            judged_s=float(judged.sum() * config.HOP_SECONDS),
+        ))
+
+    if verbose:
+        _print_table(rows, yellow, red)
+        _print_summary(rows, p, yellow, red)
+    _plot(rows, yellow, red, plot_path)
+    if verbose:
+        print(f"\nTimeline picture saved to {plot_path.relative_to(root)}")
+    return rows
+
+
+def _verdict_text(row: dict) -> str:
+    if row["first_stop"] is not None:
+        return f"STOP at {fmt_time(row['first_stop'])}"
+    if row["first_odd"] is not None:
+        return f"ODD at {fmt_time(row['first_odd'])} ({row['pct_odd']:.1f}% of the time)"
+    return "GOOD throughout"
+
+
+def _print_table(rows: list[dict], yellow: float, red: float) -> None:
+    print(f"Yellow (odd) above {yellow:.2f}, red (stop) above {red:.2f}. Scores: ~1-2 is typical.\n")
+    print(f"{'recording':30s} {'label':9s} {'judged':>7s} {'typical':>8s} {'worst':>6s} {'when':>6s}  meter would have shown")
+    for row in rows:
+        r = row["run"]
+        tag = r.label + ("*" if row["unseen"] else "")
+        print(f"{r.filename[:30]:30s} {tag:9s} {fmt_time(row['judged_s']):>7s} {row['median']:8.2f} "
+              f"{row['max']:6.2f} {fmt_time(row['t_max']):>6s}  {_verdict_text(row)}")
+    print("* scored by a model that never heard this recording")
+
+
+def _print_summary(rows: list[dict], p, yellow: float, red: float) -> None:
+    normals = [r for r in rows if r["unseen"]]
+    others = [r for r in rows if not r["unseen"]]
+    n_stop = sum(r["first_stop"] is not None for r in normals)
+    n_odd = sum(r["first_stop"] is None and r["first_odd"] is not None for r in normals)
+    print("\nSUMMARY (plain language)")
+    print(f"- The detector learned what a good cut sounds like from {len(p.train_runs)} recordings "
+          f"({fmt_time(sum(r['judged_s'] for r in normals))} of judged cutting time).")
+    print(f"- Tested honestly on those good cuts (each scored by a model that never heard it): "
+          f"{n_stop} would have shown STOP, {n_odd} would have shown ODD only, "
+          f"{len(normals) - n_stop - n_odd} stayed GOOD throughout.")
+    if normals:
+        fa = np.mean([r["pct_odd"] for r in normals])
+        print(f"- False alarms: on average {fa:.1f}% of good-cut seconds showed ODD or STOP "
+              f"(about {fa * 36:.0f} seconds per hour of cutting).")
+    for r in others:
+        print(f"- {r['run'].filename} ({r['run'].label}): {_verdict_text(r)}.")
+    if len(p.train_runs) < 10:
+        print(f"- CAUTION: only {len(p.train_runs)} good cuts so far. The yellow/red lines are provisional; "
+              f"expect them to settle after ~10-20 good cuts.")
+
+
+def _plot(rows: list[dict], yellow: float, red: float, path: Path) -> None:
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(len(rows), 1, figsize=(14, 2.4 * len(rows)), squeeze=False)
+    for ax, row in zip(axes[:, 0], rows):
+        t, s, v = row["times"] + config.WINDOW_SECONDS / 2, row["scores"], row["verdicts"]
+        ax.plot(t, s, color="#444", lw=0.6, zorder=1)
+        for verdict, colour in COLOURS.items():
+            m = v == verdict
+            if m.any():
+                ax.scatter(t[m], s[m], s=8, color=colour, zorder=2, label=verdict)
+        ax.axhline(yellow, color=COLOURS[ODD], ls="--", lw=1)
+        ax.axhline(red, color=COLOURS[STOP], ls="--", lw=1)
+        title = f"{row['run'].filename} [{row['run'].label}]" + ("  (model never heard this one)" if row["unseen"] else "")
+        ax.set_title(title + f"  ->  {_verdict_text(row)}", fontsize=10, loc="left")
+        ax.set_ylabel("weirdness"); ax.set_ylim(0, max(6, np.nanmax(s) * 1.05))
+        ax.set_xlim(0, t[-1]); ax.grid(alpha=0.3)
+        step = 30 if t[-1] > 150 else 10
+        ax.set_xticks(np.arange(0, t[-1] + step, step))
+        ax.set_xticklabels([fmt_time(x) for x in np.arange(0, t[-1] + step, step)], fontsize=8)
+    axes[0, 0].legend(loc="upper right", fontsize=8, ncol=4)
+    axes[-1, 0].set_xlabel("time in recording (grey = motor off, not judged)")
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=80)
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    evaluate()

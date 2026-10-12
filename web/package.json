@@ -1,0 +1,6 @@
+{
+  "name": "saw-sound-meter",
+  "private": true,
+  "type": "module",
+  "description": "Phone web page that listens to a cut-off saw and shows GOOD / ODD / STOP. No build step, no server."
+}

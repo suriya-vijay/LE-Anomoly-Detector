@@ -13,7 +13,7 @@ const TEXT = {
   [ODD]: ["ODD", "Sound is unusual. Watch the cut."],
   [STOP]: ["STOP", "Sound is far from normal. Stop and check."],
 };
-const SAVED_KEY = "sawmeter.savedCuts", SENS_KEY = "sawmeter.sensitivity";
+const SAVED_KEY = "sawmeter.savedCuts", SENS_KEY = "sawmeter.sensitivity", MATERIAL_KEY = "sawmeter.lastMaterial";
 
 let model, fx, det, mic, windower, wakeLock;
 let listening = false, lastVibrate = 0, beepCtx;
@@ -111,13 +111,35 @@ function beep() {
 // ---------- after-cut feedback ----------
 function saveCut(label) {
   if (!currentCut) return;
+  const material = $("cut-material").value.trim(), notes = $("cut-notes").value.trim();
   const cuts = loadSaved();
-  cuts.push({ label, at: new Date().toISOString(), model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut });
+  cuts.push({ label, material, notes, at: new Date().toISOString(), duration_s: Math.round(currentCut.length * model.audio.hop_s),
+    sensitivity: det.sensitivity, model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut });
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); } catch { alert("Phone storage is full. Download the saved cuts, then Clear."); }
-  currentCut = null; $("after-cut").hidden = true; updateSavedCount();
+  localStorage.setItem(MATERIAL_KEY, material);              // remembered for the next cut
+  currentCut = null; $("after-cut").hidden = true; $("cut-notes").value = ""; updateSavedCount();
 }
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"); } catch { return []; } };
-function updateSavedCount() { $("saved-count").textContent = loadSaved().length; }
+function updateSavedCount() {
+  const cuts = loadSaved();
+  $("saved-count").textContent = cuts.length;
+  const list = $("saved-list"); list.innerHTML = "";
+  cuts.slice().reverse().forEach((c, i) => {
+    const li = document.createElement("li");
+    const when = new Date(c.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    li.innerHTML = `<span class="tag tag-${c.label}">${c.label === "normal" ? "GOOD" : "ODD"}</span>` +
+      `<span><b>${esc(c.material) || "(no material)"}</b> <span class="meta">${when}, ${fmt(c.duration_s || 0)}</span>` +
+      (c.notes ? `<br><span class="meta">${esc(c.notes)}</span>` : "") + `</span>` +
+      `<button class="link del" title="Delete this saved cut">✕</button>`;
+    li.querySelector(".del").onclick = () => { cuts.splice(cuts.length - 1 - i, 1); localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); updateSavedCount(); };
+    list.appendChild(li);
+  });
+  // material suggestions = ones used before
+  const dl = $("material-list"); dl.innerHTML = "";
+  [...new Set(cuts.map((c) => c.material).filter(Boolean))].forEach((m) => { const o = document.createElement("option"); o.value = m; dl.appendChild(o); });
+  if (!$("cut-material").value) $("cut-material").value = localStorage.getItem(MATERIAL_KEY) || cuts.at(-1)?.material || "";
+}
+const esc = (s) => String(s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 function downloadSaved() {
   const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), cuts: loadSaved() })], { type: "application/json" });
   const a = document.createElement("a");
@@ -193,6 +215,7 @@ $("sensitivity").oninput = (e) => { const v = parseFloat(e.target.value); det.se
 $("sens-reset").onclick = () => { $("sensitivity").value = 1; $("sensitivity").dispatchEvent(new Event("input")); };
 $("cut-good").onclick = () => saveCut("normal");
 $("cut-odd").onclick = () => saveCut("abnormal");
+$("cut-skip").onclick = () => { currentCut = null; $("after-cut").hidden = true; };
 $("download").onclick = downloadSaved;
 $("clear-saved").onclick = () => { if (confirm("Delete all saved cuts on this phone?")) { localStorage.removeItem(SAVED_KEY); updateSavedCount(); } };
 $("file").onchange = (e) => e.target.files[0] && testFile(e.target.files[0]);

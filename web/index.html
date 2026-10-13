@@ -35,11 +35,19 @@
 
   <section id="after-cut" class="panel" hidden>
     <h2>How was that cut?</h2>
-    <p class="small">Your answer is saved on this phone (sound measurements only, no audio) so the model can be retrained later.</p>
+    <p class="small">Your answer and notes are saved on this phone (sound measurements only, no audio) so the model can be retrained later.</p>
+    <label class="field"><span>Sample / material</span>
+      <input id="cut-material" type="text" list="material-list" placeholder="e.g. Ultracore 81 Ni1M-H Plus on nickel alloy steel" autocomplete="off">
+      <datalist id="material-list"></datalist>
+    </label>
+    <label class="field"><span>Notes (how the cut went, blade, feed, anything unusual)</span>
+      <textarea id="cut-notes" rows="2" placeholder="e.g. steady cut, coolant on, slight squeal near the end"></textarea>
+    </label>
     <div class="row">
       <button id="cut-good" class="btn btn-good">That cut was GOOD</button>
       <button id="cut-odd" class="btn btn-odd">That cut was ODD</button>
     </div>
+    <p class="small"><button id="cut-skip" class="link">Skip, don't save this one</button></p>
   </section>
 
   <section class="panel controls">
@@ -64,6 +72,7 @@
     <p class="small"><span id="saved-count">0</span> saved on this phone.
       <button id="download" class="link">Download as a file</button> and drop it into the project folder to retrain.
       <button id="clear-saved" class="link">Clear</button></p>
+    <ul id="saved-list" class="saved-list"></ul>
   </section>
 
   <section class="panel">

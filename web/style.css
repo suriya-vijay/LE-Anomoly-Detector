@@ -41,6 +41,14 @@ body[data-state="off"]  .meter, body[data-state="transition"] .meter, body[data-
 .link { font: inherit; background: none; border: 0; color: #8ab4f8; text-decoration: underline; cursor: pointer; padding: 0; }
 .field { display: block; margin-top: 12px; }
 .field input[type=range] { width: 100%; }
+.field input[type=text], .field textarea { display: block; width: 100%; margin-top: 4px; padding: 10px; font: inherit; font-size: 1rem;
+  border-radius: 10px; border: 1px solid #444; background: #111; color: var(--fg); }
+.saved-list { list-style: none; padding: 0; margin: 10px 0 0; font-size: .9rem; }
+.saved-list li { padding: 8px 10px; border-radius: 8px; background: #262626; margin-top: 6px; display: flex; gap: 8px; align-items: baseline; }
+.saved-list .tag { font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #fff; font-size: .8rem; }
+.saved-list .tag-normal { background: var(--green); } .saved-list .tag-abnormal { background: #b26a00; }
+.saved-list .meta { color: var(--muted); }
+.saved-list .del { margin-left: auto; }
 .small { font-size: .85rem; color: var(--muted); }
 .error { margin-top: 10px; padding: 10px; border-radius: 10px; background: #4a1414; color: #ffb4b4; }
 footer { margin: 14px 0 20px; text-align: center; }

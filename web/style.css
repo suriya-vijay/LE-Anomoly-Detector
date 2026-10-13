@@ -36,7 +36,8 @@ body[data-state="off"]  .meter, body[data-state="transition"] .meter, body[data-
 .toggles label { flex: 1 1 200px; }
 .btn { font: inherit; font-weight: 700; font-size: 1.1rem; padding: 14px 16px; border: 0; border-radius: 12px; cursor: pointer; color: #fff; background: #3a3a3a; }
 .btn-primary { background: #1565c0; }
-.btn-good { background: var(--green); } .btn-odd { background: #b26a00; }
+.btn-good { background: var(--green); } .btn-odd { background: #b26a00; } .btn-through { background: #6a1b9a; }
+.through-row { align-items: center; gap: 12px; margin-top: 10px; }
 .btn:disabled { opacity: .5; }
 .link { font: inherit; background: none; border: 0; color: #8ab4f8; text-decoration: underline; cursor: pointer; padding: 0; }
 .field { display: block; margin-top: 12px; }

@@ -27,6 +27,7 @@ class SavedCut:
     notes: str
     saved_at: str
     duration_s: float
+    through_at_s: float | None   # seconds after motor-on when the user tapped "Blade is through" (None if not tapped)
     features: np.ndarray   # (n_windows, n_features)
 
 
@@ -52,11 +53,13 @@ def load_saved_cuts(root: str | Path, verbose: bool = False) -> list[SavedCut]:
             cuts.append(SavedCut(
                 name=f"{path.stem}#{i}", label=c.get("label", "unknown"), material=c.get("material", ""),
                 notes=c.get("notes", ""), saved_at=c.get("at", ""),
-                duration_s=float(c.get("duration_s", len(feats) * config.HOP_SECONDS)), features=feats))
+                duration_s=float(c.get("duration_s", len(feats) * config.HOP_SECONDS)),
+                through_at_s=None if c.get("through_at_s") is None else float(c["through_at_s"]), features=feats))
     if verbose:
         print(f"{len(cuts)} saved cut(s) from the phone in {folder}:")
         for c in cuts:
-            print(f"  {c.name:28s} {c.label:9s} {c.duration_s:5.0f}s  {c.saved_at[:16]:16s} {c.material}  {c.notes}")
+            thr = f"through at {c.through_at_s:.0f}s" if c.through_at_s is not None else "no through-mark"
+            print(f"  {c.name:28s} {c.label:9s} {c.duration_s:5.0f}s  {thr:18s} {c.saved_at[:16]:16s} {c.material}  {c.notes}")
     return cuts
 
 

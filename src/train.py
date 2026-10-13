@@ -36,8 +36,14 @@ class Prepared:
     times: dict[str, np.ndarray]          # filename -> window start times
     phases: dict[str, np.ndarray]         # filename -> off/transition/running per window
     usable: dict[str, np.ndarray]         # filename -> True where inside use_from/use_until
-    motor_threshold_db: float
+    motor_threshold_db: dict[str, float]  # per capture source ("file" / "phone")
     train_runs: list[Run] = field(default_factory=list)
+
+    def threshold_for(self, run: Run) -> float:
+        return self.motor_threshold_db.get(source_of(run), self.motor_threshold_db["file"])
+
+    def groups(self, runs: list[Run]) -> list[str]:
+        return [source_of(r) for r in runs]
 
     def running(self, run: Run) -> np.ndarray:
         """Feature rows that are judged (motor running and inside the usable range)."""
@@ -56,11 +62,19 @@ def prepare(root: Path = ROOT, verbose: bool = True) -> Prepared:
     if len(train_runs) < 2:
         sys.exit("Need at least 2 normal recordings with train=yes in data/runs.csv.")
     usable = {r.filename: usable_mask(r, times[r.filename]) for r in runs}
-    thr = motor_on_threshold(np.concatenate([feats[r.filename][usable[r.filename], 0] for r in train_runs]))
-    phases = {r.filename: label_phases(feats[r.filename], thr) for r in runs}
-    p = Prepared(runs, feats, times, phases, usable, thr, train_runs)
+    # The phone on the saw housing hears the motor louder than a recording made elsewhere,
+    # so each capture source learns its own "motor on" loudness level.
+    thr: dict[str, float] = {}
+    for src in ("file", "phone"):
+        rs = [r for r in train_runs if source_of(r) == src]
+        if rs:
+            thr[src] = motor_on_threshold(np.concatenate([feats[r.filename][usable[r.filename], 0] for r in rs]))
+    if "file" not in thr:
+        thr["file"] = thr["phone"]
+    p = Prepared(runs, feats, times, {}, usable, thr, train_runs)
+    p.phases = {r.filename: label_phases(feats[r.filename], p.threshold_for(r)) for r in runs}
     if verbose:
-        print(f"Motor counts as ON above {thr:.1f} dB.")
+        print("Motor counts as ON above " + ", ".join(f"{v:.1f} dB ({k} recordings)" for k, v in thr.items()) + ".")
         for r in runs:
             spans = ", ".join(f"{fmt_time(a)}-{fmt_time(b)}" for a, b in on_off_times(phases[r.filename]))
             used = f" (using {fmt_time(r.use_from_s)}-{fmt_time(r.use_until_s)})" if r.use_until_s else ""
@@ -71,8 +85,11 @@ def prepare(root: Path = ROOT, verbose: bool = True) -> Prepared:
 
 def leave_one_out_models(p: Prepared) -> dict[str, SawDetector]:
     """For each training run, a model fitted on all the OTHER training runs."""
-    return {r.filename: SawDetector().fit([p.running(o) for o in p.train_runs if o is not r])
-            for r in p.train_runs}
+    out = {}
+    for r in p.train_runs:
+        others = [o for o in p.train_runs if o is not r]
+        out[r.filename] = SawDetector().fit([p.running(o) for o in others], p.groups(others))
+    return out
 
 
 def leave_one_out_scores(p: Prepared, models: dict[str, SawDetector] | None = None) -> dict[str, np.ndarray]:
@@ -81,8 +98,25 @@ def leave_one_out_scores(p: Prepared, models: dict[str, SawDetector] | None = No
     return {r.filename: models[r.filename].score(p.running(r)) for r in p.train_runs}
 
 
-def thresholds_from(loo: dict[str, np.ndarray]) -> tuple[float, float]:
-    allscores = np.concatenate(list(loo.values()))
+def source_of(run: Run) -> str:
+    """'phone' for cuts judged live on the phone page, 'file' for audio recordings."""
+    return "phone" if run.features is not None else "file"
+
+
+def threshold_runs(p: Prepared) -> list[Run]:
+    """Training runs that may set the yellow/red lines: a run only counts if at least one
+    OTHER training run was captured the same way (phone page vs recording file). Otherwise
+    the leave-one-out model has never heard that kind of sound and would score it as weird,
+    which would push the lines up and make the meter blind."""
+    counts = {}
+    for r in p.train_runs:
+        counts[source_of(r)] = counts.get(source_of(r), 0) + 1
+    return [r for r in p.train_runs if counts[source_of(r)] >= 2]
+
+
+def thresholds_from(loo: dict[str, np.ndarray], p: Prepared | None = None) -> tuple[float, float]:
+    use = loo if p is None else {r.filename: loo[r.filename] for r in threshold_runs(p)}
+    allscores = np.concatenate(list(use.values()))
     yellow = float(np.percentile(allscores, config.YELLOW_PERCENTILE))
     red = max(float(np.percentile(allscores, config.RED_PERCENTILE)), yellow * config.RED_MIN_RATIO)
     return yellow, red
@@ -91,17 +125,24 @@ def thresholds_from(loo: dict[str, np.ndarray]) -> tuple[float, float]:
 def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepared, dict[str, np.ndarray]]:
     p = prepare(root, verbose)
     loo = leave_one_out_scores(p)
-    yellow, red = thresholds_from(loo)
-    det = SawDetector().fit([p.running(r) for r in p.train_runs])
+    yellow, red = thresholds_from(loo, p)
+    skipped = [r for r in p.train_runs if r not in threshold_runs(p)]
+    if verbose and skipped:
+        print(f"\nNOTE: {len(skipped)} cut(s) joined the model but could not help set the yellow/red lines yet "
+              f"(first of their kind; need a second cut captured the same way): " + ", ".join(r.filename for r in skipped))
+    det = SawDetector().fit([p.running(r) for r in p.train_runs], p.groups(p.train_runs))
     det.yellow, det.red = yellow, red
-    det.motor_threshold_db = p.motor_threshold_db
+    # the phone page captures sound like the phone cuts do, so it gets the phone's motor level
+    det.motor_threshold_db = p.motor_threshold_db.get("phone", p.motor_threshold_db["file"])
     det.trained_on = [r.filename for r in p.train_runs]
     det.save(MODEL_PATH, WEB_MODEL_PATH)
     if verbose:
         n = len(p.train_runs)
         typical = float(np.median(np.concatenate(list(loo.values()))))
+        by_src = {s: sum(1 for c in det.clusters if c.get("source") == s) for s in dict.fromkeys(p.groups(p.train_runs))}
         print(f"\nLearned {len(det.clusters)} kinds of normal from {n} good cuts "
-              f"({sum(len(p.running(r)) for r in p.train_runs)} judged windows).")
+              f"({sum(len(p.running(r)) for r in p.train_runs)} judged windows): "
+              + ", ".join(f"{k} from {s} recordings" for s, k in by_src.items()) + ".")
         print(f"Typical score for a good cut: {typical:.2f}.  Yellow (odd) above {yellow:.2f}.  Red (stop) above {red:.2f}.")
         if n < 10:
             print(f"CAUTION: only {n} good cuts. The yellow/red lines are provisional until there are ~10-20.")

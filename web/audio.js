@@ -8,8 +8,9 @@ class Resampler {
   constructor(fromRate, toRate) {
     this.ratio = fromRate / toRate;
     this.pos = 0; this.tail = new Float32Array(0);
-    // windowed-sinc low-pass at 0.9 * (toRate/2) so nothing above the new Nyquist aliases down
-    const taps = 63, fc = 0.45 / this.ratio;
+    // windowed-sinc low-pass just under the new Nyquist (like scipy's resample_poly), so the
+    // live page keeps the same top tone band as the Python side without aliasing
+    const taps = 95, fc = 0.49 / this.ratio;
     this.kernel = new Float32Array(taps);
     const mid = (taps - 1) / 2;
     let sum = 0;

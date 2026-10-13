@@ -18,7 +18,7 @@ import numpy as np
 from . import config
 from .detector import GOOD, ODD, STOP, SawDetector
 from .phases import OFF, RUNNING, fmt_time
-from .train import ROOT, leave_one_out_models, leave_one_out_scores, thresholds_from, train
+from .train import ROOT, leave_one_out_models, leave_one_out_scores, threshold_runs, thresholds_from, train
 
 REPORT_PATH = ROOT / "reports" / "weirdness.png"
 COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
@@ -27,7 +27,7 @@ COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
 def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_PATH) -> list[dict]:
     det, p, _ = train(root, verbose=False)
     loo_models = leave_one_out_models(p)
-    yellow, red = thresholds_from(leave_one_out_scores(p, loo_models))
+    yellow, red = thresholds_from(leave_one_out_scores(p, loo_models), p)
 
     rows = []
     for r in p.runs:
@@ -75,14 +75,19 @@ def _print_table(rows: list[dict], yellow: float, red: float) -> None:
     print(f"{'recording':30s} {'label':9s} {'judged':>7s} {'typical':>8s} {'worst':>6s} {'when':>6s}  meter would have shown")
     for row in rows:
         r = row["run"]
-        tag = r.label + ("*" if row["unseen"] else "")
+        tag = r.label + ("*" if row["unseen"] else "") + ("+" if r.features is not None else "")
+        if row["judged_s"] == 0:
+            print(f"{r.filename[:30]:30s} {tag:9s} {'0:00':>7s}  (motor never detected as running)")
+            continue
         print(f"{r.filename[:30]:30s} {tag:9s} {fmt_time(row['judged_s']):>7s} {row['median']:8.2f} "
               f"{row['max']:6.2f} {fmt_time(row['t_max']):>6s}  {_verdict_text(row)}")
-    print("* scored by a model that never heard this recording")
+    print("* scored by a model that never heard this recording   + judged live on the phone page")
 
 
 def _print_summary(rows: list[dict], p, yellow: float, red: float) -> None:
-    normals = [r for r in rows if r["unseen"]]
+    eligible = {r.filename for r in threshold_runs(p)}
+    normals = [r for r in rows if r["unseen"] and r["run"].filename in eligible]
+    firsts = [r for r in rows if r["unseen"] and r["run"].filename not in eligible]
     others = [r for r in rows if not r["unseen"]]
     n_stop = sum(r["first_stop"] is not None for r in normals)
     n_odd = sum(r["first_stop"] is None and r["first_odd"] is not None for r in normals)
@@ -96,6 +101,10 @@ def _print_summary(rows: list[dict], p, yellow: float, red: float) -> None:
         fa = np.mean([r["pct_odd"] for r in normals])
         print(f"- False alarms: on average {fa:.1f}% of good-cut seconds showed ODD or STOP "
               f"(about {fa * 36:.0f} seconds per hour of cutting).")
+    for r in firsts:
+        print(f"- {r['run'].filename} is the first good cut captured its way (phone page vs recording file). "
+              f"It joined the model, but it can't be tested honestly until a second one exists "
+              f"(a model that never heard it shows {_verdict_text(r)}, as expected).")
     for r in others:
         print(f"- {r['run'].filename} ({r['run'].label}): {_verdict_text(r)}.")
     if len(p.train_runs) < 10:

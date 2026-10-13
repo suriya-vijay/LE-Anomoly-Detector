@@ -47,21 +47,26 @@ class SawDetector:
         self.sr = config.SAMPLE_RATE
 
     # ----- learning -----
-    def fit(self, runs_features: list[np.ndarray]) -> "SawDetector":
-        """runs_features: one array (n_windows, n_features) of RUNNING windows per normal run."""
+    def fit(self, runs_features: list[np.ndarray], groups: list[str] | None = None) -> "SawDetector":
+        """runs_features: one array (n_windows, n_features) of RUNNING windows per normal run.
+        groups: optional capture source per run (e.g. "file" / "phone"). Each source gets its
+        own kinds of normal, so a louder phone-on-the-housing cut can't crowd out the others."""
+        groups = groups or ["all"] * len(runs_features)
         X = np.vstack(runs_features)[:, self.distance_index].astype(float)
         self.mean = X.mean(axis=0)
         self.std = X.std(axis=0) + 1e-6
-        Z = (X - self.mean) / self.std
-        k = max(1, min(self.n_clusters, len(Z) // MIN_CLUSTER_WINDOWS))
-        labels = KMeans(n_clusters=k, n_init=10, random_state=self.seed).fit_predict(Z) if k > 1 else np.zeros(len(Z), int)
         self.clusters = []
-        for c in range(k):
-            Zc = Z[labels == c]
-            if len(Zc) < 2:
-                continue
-            lw = LedoitWolf().fit(Zc)
-            self.clusters.append({"mean": lw.location_, "precision": lw.precision_, "n_windows": int(len(Zc))})
+        for g in dict.fromkeys(groups):                      # unique, in order
+            Xg = np.vstack([f for f, s in zip(runs_features, groups) if s == g])[:, self.distance_index].astype(float)
+            Z = (Xg - self.mean) / self.std
+            k = max(1, min(self.n_clusters, len(Z) // MIN_CLUSTER_WINDOWS))
+            labels = KMeans(n_clusters=k, n_init=10, random_state=self.seed).fit_predict(Z) if k > 1 else np.zeros(len(Z), int)
+            for c in range(k):
+                Zc = Z[labels == c]
+                if len(Zc) < 2:
+                    continue
+                lw = LedoitWolf().fit(Zc)
+                self.clusters.append({"mean": lw.location_, "precision": lw.precision_, "n_windows": int(len(Zc)), "source": g})
         return self
 
     # ----- scoring -----
@@ -113,8 +118,8 @@ class SawDetector:
             "feature_names": self.feature_names,
             "distance_index": self.distance_index,
             "scaler": {"mean": self.mean.tolist(), "std": self.std.tolist()},
-            "clusters": [{"mean": c["mean"].tolist(), "precision": c["precision"].tolist(), "n_windows": c["n_windows"]}
-                         for c in self.clusters],
+            "clusters": [{"mean": c["mean"].tolist(), "precision": c["precision"].tolist(), "n_windows": c["n_windows"],
+                          "source": c.get("source", "all")} for c in self.clusters],
             "thresholds": {"yellow": self.yellow, "red": self.red,
                            "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))},
             "smooth_windows": config.SMOOTH_WINDOWS,
@@ -132,8 +137,8 @@ class SawDetector:
         det.distance_index = d["distance_index"]
         det.mean = np.array(d["scaler"]["mean"])
         det.std = np.array(d["scaler"]["std"])
-        det.clusters = [{"mean": np.array(c["mean"]), "precision": np.array(c["precision"]), "n_windows": c["n_windows"]}
-                        for c in d["clusters"]]
+        det.clusters = [{"mean": np.array(c["mean"]), "precision": np.array(c["precision"]), "n_windows": c["n_windows"],
+                         "source": c.get("source", "all")} for c in d["clusters"]]
         det.yellow, det.red = d["thresholds"]["yellow"], d["thresholds"]["red"]
         det.motor_threshold_db = d["motor"]["threshold_db"]
         det.trained_on = d.get("trained_on", [])

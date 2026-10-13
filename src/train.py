@@ -20,6 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config
+from .breakthrough import BreakthroughModel, segments
 from .detector import SawDetector
 from .phases import RUNNING, fmt_time, label_phases, motor_on_threshold, on_off_times
 from .runlog import Run, features_for, load_runs, usable_mask
@@ -142,6 +143,42 @@ def thresholds_from(loo: dict[str, np.ndarray], p: Prepared | None = None) -> tu
     return by[web_source(by)]
 
 
+def breakthrough_segments(p: Prepared, det: SawDetector, runs: list[Run]) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """'In the steel' / 'through' rows per phone cut, standardised like the detector does."""
+    out = {}
+    for r in runs:
+        Z = (p.feats[r.filename][:, det.distance_index] - det.mean) / det.std
+        seg = segments(Z, p.phases[r.filename], r.through_at_s)
+        if seg is not None:
+            out[r.filename] = seg
+    return out
+
+
+def fit_breakthrough(segs: dict[str, tuple[np.ndarray, np.ndarray]], skip: str | None = None) -> BreakthroughModel | None:
+    use = [v for k, v in segs.items() if k != skip]
+    if len(use) < 2:
+        return None
+    return BreakthroughModel().fit([u[0] for u in use], [u[1] for u in use])
+
+
+def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None]]:
+    """For each phone cut: (seconds after motor-on where a model that never saw it would say
+    'blade is through', or None; the user's own mark, or None)."""
+    phone = [r for r in p.train_runs if source_of(r) == "phone"]
+    segs = breakthrough_segments(p, det, phone)
+    out = {}
+    for r in phone:
+        m = fit_breakthrough(segs, skip=r.filename)
+        if m is None:
+            continue
+        Z = (p.feats[r.filename][:, det.distance_index] - det.mean) / det.std
+        ph = p.phases[r.filename]
+        _, fired = m.track(m.load(Z), ph)
+        on = int(np.flatnonzero(ph != "off")[0]) if np.any(ph != "off") else 0
+        out[r.filename] = (None if fired is None else (fired - on) * config.HOP_SECONDS, r.through_at_s)
+    return out
+
+
 def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepared, dict[str, np.ndarray]]:
     p = prepare(root, verbose)
     loo = leave_one_out_scores(p)
@@ -157,6 +194,8 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
     # the phone page captures sound like the phone cuts do, so it gets the phone's motor level
     det.motor_threshold_db = p.motor_threshold_db.get("phone", p.motor_threshold_db["file"])
     det.trained_on = [r.filename for r in p.train_runs]
+    phone = [r for r in p.train_runs if source_of(r) == "phone"]
+    det.breakthrough = fit_breakthrough(breakthrough_segments(p, det, phone))
     det.save(MODEL_PATH, WEB_MODEL_PATH)
     if verbose:
         n = len(p.train_runs)
@@ -171,6 +210,15 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
         print(f"Typical honest score for a good cut: {typical:.2f}.")
         if n < 10:
             print(f"CAUTION: only {n} good cuts. The yellow/red lines are provisional until there are ~10-20.")
+        if det.breakthrough is None:
+            print("Blade-through indicator: not learned yet (needs at least 2 phone cuts).")
+        else:
+            marked = sum(r.through_at_s is not None for r in phone)
+            print(f"Blade-through indicator learned from {len(phone)} phone cuts ({marked} with a 'Blade is through' mark).")
+            for name, (guess, truth) in breakthrough_guesses(p, det).items():
+                g = "never" if guess is None else fmt_time(guess)
+                t = "" if truth is None else f"  (you marked {fmt_time(truth)}: {'%+.0f s' % (guess - truth) if guess is not None else 'missed'})"
+                print(f"  {name:28s} a model that never saw it says 'through' at {g}{t}")
         print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
     return det, p, loo
 

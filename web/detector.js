@@ -19,6 +19,7 @@ export class Detector {
     this.setSensitivity(sensitivity);
     this.iRms = model.feature_names.indexOf("rms_db");
     this.iPulse = model.feature_names.indexOf("pulse_depth");
+    this.bt = model.breakthrough ? new Breakthrough(model.breakthrough) : null;
     this.reset();
   }
 
@@ -29,12 +30,18 @@ export class Detector {
     this.red = this.model.thresholds.red / s;
   }
 
-  reset() { this._recent = []; this._oddStreak = 0; this.motor = new MotorTracker(this.model); }
+  reset() { this._recent = []; this._oddStreak = 0; this.motor = new MotorTracker(this.model); this.bt?.reset(); }
+
+  /** Standardised feature vector (the space the clusters and the break-through direction live in). */
+  standardise(f) {
+    const z = new Float64Array(this.n);
+    for (let j = 0; j < this.n; j++) z[j] = (f[this.idx[j]] - this.mean[j]) / this.std[j];
+    return z;
+  }
 
   /** Raw (unsmoothed) distance of one feature vector from normal. */
   rawScore(f) {
-    const z = new Float64Array(this.n);
-    for (let j = 0; j < this.n; j++) z[j] = (f[this.idx[j]] - this.mean[j]) / this.std[j];
+    const z = this.standardise(f);
     let best = Infinity;
     for (const c of this.clusters) {
       const d = new Float64Array(this.n);
@@ -51,7 +58,10 @@ export class Detector {
     return Math.sqrt(Math.max(best, 0) / this.n);
   }
 
-  /** Feed one window's features (live, in order). Returns {score, raw, phase, verdict, cutDone}. */
+  /** Feed one window's features (live, in order).
+   *  Returns {score, raw, phase, verdict, cutDone, load, through}: load is the blade-load number
+   *  (about -1 in the steel, +1 through; null when not judging), through is true once the
+   *  break-through indicator has fired for this cut. */
   push(f) {
     const raw = this.rawScore(f);
     this._recent.push(raw);
@@ -65,7 +75,8 @@ export class Detector {
       this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
       verdict = (score > this.red || this._oddStreak >= this.redAfterYellow) ? STOP : score > this.yellow ? ODD : GOOD;
     }
-    return { score, raw, phase, verdict, cutDone };
+    const bt = this.bt ? this.bt.push(this.standardise(f), phase) : { load: null, through: false };
+    return { score, raw, phase, verdict, cutDone, load: bt.load, through: bt.through };
   }
 
   /** Offline: score a whole recording's features (array of vectors) exactly like Python's evaluate. */
@@ -84,7 +95,43 @@ export class Detector {
       streak = scores[i] > this.yellow ? streak + 1 : 0;
       verdicts.push((scores[i] > this.red || streak >= this.redAfterYellow) ? STOP : scores[i] > this.yellow ? ODD : GOOD);
     }
-    return { scores, phases, verdicts };
+    let loads = null, through = null;
+    if (this.bt) {
+      const b = new Breakthrough(this.model.breakthrough);
+      loads = []; through = null;
+      featureList.forEach((f, i) => {
+        const r = b.push(this.standardise(f), phases[i]);
+        loads.push(r.load);
+        if (r.through && through === null) through = i;
+      });
+    }
+    return { scores, phases, verdicts, loads, through };
+  }
+}
+
+/** Blade break-through indicator: same maths and state machine as src/breakthrough.py.
+ *  load = w . (z - mid): about -1 while the blade is in the steel, about +1 once through.
+ *  "through" fires only after the load has read "in the steel" for loaded_windows, then
+ *  stays above fire_level for hold_windows. Resets whenever the motor is not "running". */
+export class Breakthrough {
+  constructor(d) { this.d = d; this.reset(); }
+  reset() { this.hist = []; this.loadedRun = 0; this.hold = 0; this.inSteel = false; this.fired = false; }
+  push(z, phase) {
+    const d = this.d;
+    if (phase !== RUNNING) { this.hist = []; this.loadedRun = 0; this.hold = 0; this.inSteel = false; return { load: null, through: false }; }
+    let raw = 0;
+    for (let j = 0; j < d.w.length; j++) raw += d.w[j] * (z[j] - d.mid[j]);
+    this.hist.push(raw);
+    if (this.hist.length > d.smooth_windows) this.hist.shift();
+    const load = this.hist.reduce((a, b) => a + b, 0) / this.hist.length;
+    if (!this.inSteel) {
+      this.loadedRun = load < d.loaded_level ? this.loadedRun + 1 : 0;
+      if (this.loadedRun >= d.loaded_windows) this.inSteel = true;
+    } else {
+      this.hold = load > d.fire_level ? this.hold + 1 : 0;
+      if (this.hold >= d.hold_windows) this.fired = true;
+    }
+    return { load, through: this.fired };
   }
 }
 

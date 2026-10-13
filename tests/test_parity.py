@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from src.audio_io import split_windows
+from src.breakthrough import BreakthroughModel
 from src.detector import SawDetector
 from src.features import extract_all
 from src.phases import label_phases, motor_on_threshold
@@ -24,6 +25,10 @@ def test_js_matches_python(tmp_path):
     thr = motor_on_threshold(np.concatenate([f[:, 0] for f in normal]))
     det = SawDetector().fit([f[label_phases(f, thr) == "running"] for f in normal])
     det.yellow, det.red, det.motor_threshold_db = 3.0, 4.0, thr
+    rng = np.random.default_rng(0)                       # any direction will do: we only check Python == JS
+    bt = BreakthroughModel()
+    bt.w, bt.mid = rng.normal(size=len(det.distance_index)) * 0.05, rng.normal(size=len(det.distance_index)) * 0.1
+    det.breakthrough = bt
     model_path = tmp_path / "model.json"
     det.save(model_path)
 
@@ -47,3 +52,8 @@ def test_js_matches_python(tmp_path):
     np.testing.assert_allclose(np.array(js["scores"]), py_scores, rtol=1e-3, atol=2e-3)
     assert js["phases"] == list(py_phases)
     assert js["verdicts"] == list(py_verdicts)
+    Z = (py_feats[:, det.distance_index] - det.mean) / det.std
+    py_load, py_fire = bt.track(bt.load(Z), py_phases)
+    js_load = np.array([np.nan if v is None else v for v in js["loads"]], dtype=float)
+    np.testing.assert_allclose(js_load, py_load, rtol=1e-3, atol=2e-3, equal_nan=True)
+    assert js["through"] == py_fire

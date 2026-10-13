@@ -43,6 +43,7 @@ class SawDetector:
         self.clusters: list[dict] = []
         self.yellow = self.red = None
         self.thresholds_by_source: dict[str, tuple[float, float]] = {}
+        self.breakthrough = None              # BreakthroughModel or None (needs >= 2 phone cuts)
         self.motor_threshold_db = None
         self.trained_on: list[str] = []
         self.sr = config.SAMPLE_RATE
@@ -130,6 +131,7 @@ class SawDetector:
                       "spinup_windows": int(round(config.SPINUP_S / config.HOP_SECONDS)),
                       "spindown_windows": config.SPINDOWN_WINDOWS, "min_cut_s": config.MIN_CUT_S},
             "mel": sparse,
+            "breakthrough": self.breakthrough.to_dict() if self.breakthrough is not None else None,
         }
 
     @classmethod
@@ -145,6 +147,9 @@ class SawDetector:
         det.thresholds_by_source = {k: (v["yellow"], v["red"]) for k, v in d["thresholds"].get("by_source", {}).items()}
         det.motor_threshold_db = d["motor"]["threshold_db"]
         det.trained_on = d.get("trained_on", [])
+        if d.get("breakthrough"):
+            from .breakthrough import BreakthroughModel
+            det.breakthrough = BreakthroughModel.from_dict(d["breakthrough"])
         det.sr = d["audio"]["sr"]
         return det
 

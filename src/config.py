@@ -38,3 +38,11 @@ RED_MIN_RATIO = 1.25      # red is never closer than 25% above yellow (matters w
 # Fraction of normal runs held back for the final honest test
 HOLDOUT_FRACTION = 0.30
 RANDOM_SEED = 42
+
+# --- blade break-through indicator (src/breakthrough.py) ---
+BT_SMOOTH_WINDOWS = 20      # load number is averaged over the last 10 s
+BT_LOADED_WINDOWS = 120     # the blade must read "in the steel" for 60 s before "through" can fire
+BT_LOADED_LEVEL = -0.3      # ... meaning the load number stayed below this
+BT_HOLD_WINDOWS = 20        # "through" fires after 10 s above BT_FIRE_LEVEL
+BT_FIRE_LEVEL = 0.0
+BT_TAIL_WINDOWS = 30        # without a user mark: the last 15 s before motor-off count as "through"

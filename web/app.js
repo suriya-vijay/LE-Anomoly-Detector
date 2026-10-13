@@ -21,6 +21,7 @@ let currentCut = null;                     // features of the cut in progress (f
 let live = [];                             // recent {t, score, verdict} for the live timeline
 let t0 = 0, motorOnAt = null;
 let throughAt = null;                      // window index (since motor on) where the user tapped "Blade is through"
+let throughGuess = null;                   // window index where the page's own indicator fired
 
 // ---------- start-up ----------
 /** Fetch model.json; if it is newer than the one in memory, swap it in. Called at start-up and
@@ -36,7 +37,8 @@ async function refreshModel() {
   $("sensitivity").value = det.sensitivity; $("sens-out").textContent = det.sensitivity.toFixed(2) + "×";
   placeMarks();
   $("model-info").textContent = `Model learned from ${model.trained_on.length} good cut(s), ${model.trained_at.slice(0, 10)}. ` +
-    `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.`;
+    `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.` +
+    (model.breakthrough ? " Blade-through indicator: on." : " Blade-through indicator: not learned yet.");
   return true;
 }
 
@@ -53,7 +55,7 @@ async function start() {
   $("mic-error").hidden = true;
   try {
     if (await refreshModel()) $("phase").textContent = "Picked up a newer model.";
-    det.reset(); live = []; currentCut = null; motorOnAt = null; throughAt = null; t0 = performance.now();
+    det.reset(); live = []; currentCut = null; motorOnAt = null; throughAt = null; throughGuess = null; t0 = performance.now();
     windower = new Windower(fx.windowLength, fx.hopLength, onWindow);
     mic = new MicCapture(model.audio.sr, (s) => windower.push(s));
     const info = await mic.start();
@@ -73,7 +75,8 @@ async function stop() {
   listening = false;
   await mic?.stop(); wakeLock?.release?.(); wakeLock = null;
   $("start").hidden = false; $("stop").hidden = true;
-  setState("idle"); $("phase").textContent = "Not listening"; $("clock").textContent = ""; showThrough(false);
+  setState("idle"); $("phase").textContent = "Not listening"; $("clock").textContent = ""; $("load").textContent = "";
+  showThrough(false); $("through-banner").hidden = true;
 }
 
 function onWindow(samples) {
@@ -81,13 +84,19 @@ function onWindow(samples) {
   const r = det.push(f);
   const t = (performance.now() - t0) / 1000;
   if (r.phase !== OFF && motorOnAt === null) {                                       // motor just started
-    motorOnAt = t; currentCut = []; throughAt = null; showThrough(true);
+    motorOnAt = t; currentCut = []; throughAt = null; throughGuess = null; showThrough(true); $("through-banner").hidden = true;
   }
   if (currentCut) currentCut.push(Array.from(f, (v) => Math.round(v * 1000) / 1000));
   if (r.phase === OFF && motorOnAt !== null) {                                       // motor stopped
     if (r.cutDone) finishCut(); else currentCut = null;                              // too short to be a cut
-    motorOnAt = null; showThrough(false);
+    motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
+  if (r.through && throughGuess === null && currentCut) {                            // the page's own guess
+    throughGuess = currentCut.length;
+    $("through-banner").textContent = `I think the blade is through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it.`;
+    $("through-banner").hidden = false;
+  }
+  $("load").textContent = r.load === null ? "" : `blade load ${r.load.toFixed(1)}`;
 
   setState(r.phase === RUNNING ? r.verdict : r.phase);
   $("score").textContent = r.score.toFixed(2);
@@ -139,6 +148,7 @@ function saveCut(label) {
   const cuts = loadSaved();
   cuts.push({ label, material, notes, at: new Date().toISOString(), duration_s: Math.round(currentCut.length * model.audio.hop_s),
     through_at_s: throughAt === null ? null : Math.round(throughAt * model.audio.hop_s * 10) / 10,
+    through_guess_s: throughGuess === null ? null : Math.round(throughGuess * model.audio.hop_s * 10) / 10,
     sensitivity: det.sensitivity, model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut });
   try { localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); } catch { alert("Phone storage is full. Download the saved cuts, then Clear."); }
   localStorage.setItem(MATERIAL_KEY, material);              // remembered for the next cut
@@ -154,7 +164,8 @@ function updateSavedCount() {
     const when = new Date(c.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
     li.innerHTML = `<span class="tag tag-${c.label}">${c.label === "normal" ? "GOOD" : "ODD"}</span>` +
       `<span><b>${esc(c.material) || "(no material)"}</b> <span class="meta">${when}, ${fmt(c.duration_s || 0)}` +
-      (c.through_at_s != null ? `, blade through at ${fmt(c.through_at_s)}` : "") + `</span>` +
+      (c.through_at_s != null ? `, blade through at ${fmt(c.through_at_s)}` : "") +
+      (c.through_guess_s != null ? ` (page guessed ${fmt(c.through_guess_s)})` : "") + `</span>` +
       (c.notes ? `<br><span class="meta">${esc(c.notes)}</span>` : "") + `</span>` +
       `<button class="link del" title="Delete this saved cut">✕</button>`;
     li.querySelector(".del").onclick = () => { cuts.splice(cuts.length - 1 - i, 1); localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); updateSavedCount(); };

@@ -18,7 +18,8 @@ import numpy as np
 from . import config
 from .detector import GOOD, ODD, STOP, SawDetector
 from .phases import OFF, RUNNING, fmt_time
-from .train import ROOT, leave_one_out_models, leave_one_out_scores, source_of, threshold_runs, thresholds_by_source, train, web_source
+from .train import (ROOT, breakthrough_guesses, leave_one_out_models, leave_one_out_scores, source_of, threshold_runs,
+                    thresholds_by_source, train, web_source)
 
 REPORT_PATH = ROOT / "reports" / "weirdness.png"
 COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
@@ -58,6 +59,7 @@ def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_P
     if verbose:
         _print_table(rows, by_source)
         _print_summary(rows, p, by_source)
+        _print_breakthrough(p, det)
     _plot(rows, plot_path)
     if verbose:
         print(f"\nTimeline picture saved to {plot_path.relative_to(root)}")
@@ -113,6 +115,18 @@ def _print_summary(rows: list[dict], p, by_source: dict) -> None:
     if len(p.train_runs) < 10:
         print(f"- CAUTION: only {len(p.train_runs)} good cuts so far. The yellow/red lines are provisional; "
               f"expect them to settle after ~10-20 good cuts.")
+
+
+def _print_breakthrough(p, det) -> None:
+    guesses = breakthrough_guesses(p, det)
+    if not guesses:
+        return
+    print("\nBLADE-THROUGH INDICATOR (each phone cut judged by a model that never saw it)")
+    for name, (guess, truth) in guesses.items():
+        g = "never fired" if guess is None else f"fired at {fmt_time(guess)} after motor-on"
+        t = ("  <- you marked " + fmt_time(truth) + (f", so the guess was {guess - truth:+.0f} s" if guess is not None else ", so it missed")) \
+            if truth is not None else "  (no mark from you to check against)"
+        print(f"- {name}: {g}{t}")
 
 
 def _plot(rows: list[dict], path: Path) -> None:

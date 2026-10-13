@@ -38,6 +38,8 @@ body[data-state="off"]  .meter, body[data-state="transition"] .meter, body[data-
 .btn-primary { background: #1565c0; }
 .btn-good { background: var(--green); } .btn-odd { background: #b26a00; } .btn-through { background: #6a1b9a; }
 .through-row { align-items: center; gap: 12px; margin-top: 10px; }
+.through-banner { background: #1565c0; color: #fff; font-size: 1.1rem; margin-top: 8px; }
+.load { text-align: right; min-height: 1.2em; }
 .btn:disabled { opacity: .5; }
 .link { font: inherit; background: none; border: 0; color: #8ab4f8; text-decoration: underline; cursor: pointer; padding: 0; }
 .field { display: block; margin-top: 12px; }

@@ -35,6 +35,7 @@ class Run:
     use_until_s: float | None
     notes: str = ""
     features: np.ndarray | None = None   # pre-computed features (phone cuts)
+    through_at_s: float | None = None    # phone cuts: when the user tapped "Blade is through" (s after motor-on)
 
     def __str__(self) -> str:
         return self.filename
@@ -80,7 +81,7 @@ def load_runs(root: str | Path) -> list[Run]:
     # cuts judged on the phone page (data/saved_cuts/*.json) join in as runs without audio
     from .saved_cuts import load_saved_cuts
     for c in load_saved_cuts(root):
-        runs.append(Run(filename=c.name, label=c.label, path=None, train=(c.label == "normal"),
+        runs.append(Run(filename=c.name, label=c.label, path=None, train=(c.label == "normal"), through_at_s=c.through_at_s,
                         use_from_s=0.0, use_until_s=None,
                         notes=" - ".join(x for x in (c.material, c.notes) if x), features=c.features))
     return runs

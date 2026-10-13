@@ -29,11 +29,12 @@ DATA_FOLDERS = ("normal", "abnormal", "test")
 class Run:
     filename: str
     label: str            # normal / abnormal / unknown
-    path: Path
+    path: Path | None     # None for cuts saved by the phone page (features only, no audio)
     train: bool
     use_from_s: float
     use_until_s: float | None
     notes: str = ""
+    features: np.ndarray | None = None   # pre-computed features (phone cuts)
 
     def __str__(self) -> str:
         return self.filename
@@ -76,11 +77,19 @@ def load_runs(root: str | Path) -> list[Run]:
         ))
     for name in on_disk:
         print(f"  (warning: '{name}' is in the data folder but has no row in runs.csv, so it is ignored)")
+    # cuts judged on the phone page (data/saved_cuts/*.json) join in as runs without audio
+    from .saved_cuts import load_saved_cuts
+    for c in load_saved_cuts(root):
+        runs.append(Run(filename=c.name, label=c.label, path=None, train=(c.label == "normal"),
+                        use_from_s=0.0, use_until_s=None,
+                        notes=" - ".join(x for x in (c.material, c.notes) if x), features=c.features))
     return runs
 
 
 def features_for(run: Run, root: str | Path, sr: int = config.SAMPLE_RATE) -> tuple[np.ndarray, np.ndarray]:
     """(features, window_start_times) for a run, cached in data/cache/."""
+    if run.features is not None:                      # phone cut: features were computed on the phone
+        return run.features, window_times(len(run.features))
     root = Path(root)
     cache_dir = root / "data" / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)

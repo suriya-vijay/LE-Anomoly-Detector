@@ -25,19 +25,27 @@ _RMS = feature_names().index("rms_db")
 _PULSE = feature_names().index("pulse_depth")
 
 
+MIN_ON_OFF_GAP_DB = 4.0
+
+
 def motor_on_threshold(rms_db: np.ndarray) -> float:
     """Loudness (dB) halfway between the quiet and the loud group of windows.
 
-    A tiny 2-means split: start from the 10th/90th percentiles and move each
-    centre to the mean of the windows nearest to it until nothing changes."""
+    A tiny 2-means split: start from the quietest windows (1st percentile) and the
+    loud ones (90th) and move each centre to the mean of the windows nearest to it
+    until nothing changes. Starting from the very bottom matters: a cut saved by the
+    phone page has only a few seconds of motor-off, and starting at the 10th
+    percentile would split the loud part in two and miss half the cut."""
     x = np.asarray(rms_db, dtype=float)
-    lo, hi = np.percentile(x, 10), np.percentile(x, 90)
+    lo, hi = np.percentile(x, 1), np.percentile(x, 90)
     for _ in range(50):
         near_lo = np.abs(x - lo) <= np.abs(x - hi)
         new_lo, new_hi = x[near_lo].mean(), x[~near_lo].mean() if (~near_lo).any() else hi
         if np.isclose(new_lo, lo) and np.isclose(new_hi, hi):
             break
         lo, hi = new_lo, new_hi
+    if hi - lo < MIN_ON_OFF_GAP_DB:          # no real quiet part: assume everything is "on"
+        return float(hi - MIN_ON_OFF_GAP_DB)
     return float((lo + hi) / 2)
 
 

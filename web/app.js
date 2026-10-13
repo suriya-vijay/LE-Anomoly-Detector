@@ -22,15 +22,25 @@ let live = [];                             // recent {t, score, verdict} for the
 let t0 = 0, motorOnAt = null;
 
 // ---------- start-up ----------
-async function init() {
-  const res = await fetch("model.json", { cache: "no-cache" });
-  model = await res.json();
+/** Fetch model.json; if it is newer than the one in memory, swap it in. Called at start-up and
+ *  again on every Start tap, so a page left open in the lab still picks up a retrained model. */
+async function refreshModel() {
+  let fresh;
+  try { fresh = await (await fetch("model.json", { cache: "no-cache" })).json(); }
+  catch (e) { if (model) return false; throw e; }          // offline: keep what we have
+  if (model && fresh.trained_at === model.trained_at) return false;
+  model = fresh;
   fx = new FeatureExtractor(model);
   det = new Detector(model, loadSensitivity());
   $("sensitivity").value = det.sensitivity; $("sens-out").textContent = det.sensitivity.toFixed(2) + "×";
   placeMarks();
   $("model-info").textContent = `Model learned from ${model.trained_on.length} good cut(s), ${model.trained_at.slice(0, 10)}. ` +
     `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.`;
+  return true;
+}
+
+async function init() {
+  await refreshModel();
   if (!("vibrate" in navigator)) $("vibrate-note").textContent = "(not available on iPhone: the screen flashes instead)";
   updateSavedCount();
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))
@@ -41,6 +51,7 @@ async function init() {
 async function start() {
   $("mic-error").hidden = true;
   try {
+    if (await refreshModel()) $("phase").textContent = "Picked up a newer model.";
     det.reset(); live = []; currentCut = null; motorOnAt = null; t0 = performance.now();
     windower = new Windower(fx.windowLength, fx.hopLength, onWindow);
     mic = new MicCapture(model.audio.sr, (s) => windower.push(s));

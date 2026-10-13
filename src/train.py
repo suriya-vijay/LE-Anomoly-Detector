@@ -76,7 +76,7 @@ def prepare(root: Path = ROOT, verbose: bool = True) -> Prepared:
     if verbose:
         print("Motor counts as ON above " + ", ".join(f"{v:.1f} dB ({k} recordings)" for k, v in thr.items()) + ".")
         for r in runs:
-            spans = ", ".join(f"{fmt_time(a)}-{fmt_time(b)}" for a, b in on_off_times(phases[r.filename]))
+            spans = ", ".join(f"{fmt_time(a)}-{fmt_time(b)}" for a, b in on_off_times(p.phases[r.filename]))
             used = f" (using {fmt_time(r.use_from_s)}-{fmt_time(r.use_until_s)})" if r.use_until_s else ""
             print(f"  {r.filename:30s} [{r.label}{', train' if r in train_runs else ''}] motor on {spans}{used}; "
                   f"{len(p.running(r))} judged windows")
@@ -114,24 +114,46 @@ def threshold_runs(p: Prepared) -> list[Run]:
     return [r for r in p.train_runs if counts[source_of(r)] >= 2]
 
 
-def thresholds_from(loo: dict[str, np.ndarray], p: Prepared | None = None) -> tuple[float, float]:
-    use = loo if p is None else {r.filename: loo[r.filename] for r in threshold_runs(p)}
-    allscores = np.concatenate(list(use.values()))
-    yellow = float(np.percentile(allscores, config.YELLOW_PERCENTILE))
-    red = max(float(np.percentile(allscores, config.RED_PERCENTILE)), yellow * config.RED_MIN_RATIO)
+def _lines(scores: np.ndarray) -> tuple[float, float]:
+    yellow = float(np.percentile(scores, config.YELLOW_PERCENTILE))
+    red = max(float(np.percentile(scores, config.RED_PERCENTILE)), yellow * config.RED_MIN_RATIO)
     return yellow, red
+
+
+def thresholds_by_source(loo: dict[str, np.ndarray], p: Prepared) -> dict[str, tuple[float, float]]:
+    """Yellow/red lines per capture source. Phone cuts vary from one to the next more than
+    recordings do (phone position, device), so each source gets lines from its own honest scores;
+    one shared pair would be too strict for the phone or too loose for the files."""
+    eligible = threshold_runs(p)
+    return {src: _lines(np.concatenate([loo[r.filename] for r in eligible if source_of(r) == src]))
+            for src in dict.fromkeys(p.groups(eligible))}
+
+
+def web_source(by_source: dict) -> str:
+    """The phone page hears what the phone cuts hear, so it gets the phone's lines when they exist."""
+    return "phone" if "phone" in by_source else "file"
+
+
+def thresholds_from(loo: dict[str, np.ndarray], p: Prepared | None = None) -> tuple[float, float]:
+    """The lines the phone page will use (the phone's own once there are >= 2 phone cuts, else the recordings')."""
+    if p is None:
+        return _lines(np.concatenate(list(loo.values())))
+    by = thresholds_by_source(loo, p)
+    return by[web_source(by)]
 
 
 def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepared, dict[str, np.ndarray]]:
     p = prepare(root, verbose)
     loo = leave_one_out_scores(p)
-    yellow, red = thresholds_from(loo, p)
+    by_source = thresholds_by_source(loo, p)
+    yellow, red = by_source[web_source(by_source)]
     skipped = [r for r in p.train_runs if r not in threshold_runs(p)]
     if verbose and skipped:
         print(f"\nNOTE: {len(skipped)} cut(s) joined the model but could not help set the yellow/red lines yet "
               f"(first of their kind; need a second cut captured the same way): " + ", ".join(r.filename for r in skipped))
     det = SawDetector().fit([p.running(r) for r in p.train_runs], p.groups(p.train_runs))
     det.yellow, det.red = yellow, red
+    det.thresholds_by_source = by_source
     # the phone page captures sound like the phone cuts do, so it gets the phone's motor level
     det.motor_threshold_db = p.motor_threshold_db.get("phone", p.motor_threshold_db["file"])
     det.trained_on = [r.filename for r in p.train_runs]
@@ -143,7 +165,10 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
         print(f"\nLearned {len(det.clusters)} kinds of normal from {n} good cuts "
               f"({sum(len(p.running(r)) for r in p.train_runs)} judged windows): "
               + ", ".join(f"{k} from {s} recordings" for s, k in by_src.items()) + ".")
-        print(f"Typical score for a good cut: {typical:.2f}.  Yellow (odd) above {yellow:.2f}.  Red (stop) above {red:.2f}.")
+        for src, (y, rd) in by_source.items():
+            print(f"Lines for {src} cuts: yellow (odd) above {y:.2f}, red (stop) above {rd:.2f}"
+                  + ("  <- the phone page uses these" if src == web_source(by_source) else ""))
+        print(f"Typical honest score for a good cut: {typical:.2f}.")
         if n < 10:
             print(f"CAUTION: only {n} good cuts. The yellow/red lines are provisional until there are ~10-20.")
         print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")

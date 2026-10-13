@@ -18,7 +18,7 @@ import numpy as np
 from . import config
 from .detector import GOOD, ODD, STOP, SawDetector
 from .phases import OFF, RUNNING, fmt_time
-from .train import ROOT, leave_one_out_models, leave_one_out_scores, threshold_runs, thresholds_from, train
+from .train import ROOT, leave_one_out_models, leave_one_out_scores, source_of, threshold_runs, thresholds_by_source, train, web_source
 
 REPORT_PATH = ROOT / "reports" / "weirdness.png"
 COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
@@ -27,12 +27,14 @@ COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
 def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_PATH) -> list[dict]:
     det, p, _ = train(root, verbose=False)
     loo_models = leave_one_out_models(p)
-    yellow, red = thresholds_from(leave_one_out_scores(p, loo_models), p)
+    by_source = thresholds_by_source(leave_one_out_scores(p, loo_models), p)
+    web = by_source[web_source(by_source)]
 
     rows = []
     for r in p.runs:
         model = loo_models.get(r.filename, det)
-        model.yellow, model.red = yellow, red
+        # each recording is judged by the lines of its own capture source (phone page vs file)
+        model.yellow, model.red = yellow, red = by_source.get(source_of(r), web)
         feats, times = p.feats[r.filename], p.times[r.filename]
         phases = p.phases[r.filename].copy()
         phases[~p.usable[r.filename]] = OFF                     # trimmed parts are not judged
@@ -50,13 +52,13 @@ def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_P
             pct_odd=float(np.mean(np.isin(verdicts[judged], [ODD, STOP])) * 100) if len(js) else np.nan,
             pct_stop=float(np.mean(verdicts[judged] == STOP) * 100) if len(js) else np.nan,
             first_odd=first[ODD], first_stop=first[STOP],
-            judged_s=float(judged.sum() * config.HOP_SECONDS),
+            judged_s=float(judged.sum() * config.HOP_SECONDS), yellow=yellow, red=red,
         ))
 
     if verbose:
-        _print_table(rows, yellow, red)
-        _print_summary(rows, p, yellow, red)
-    _plot(rows, yellow, red, plot_path)
+        _print_table(rows, by_source)
+        _print_summary(rows, p, by_source)
+    _plot(rows, plot_path)
     if verbose:
         print(f"\nTimeline picture saved to {plot_path.relative_to(root)}")
     return rows
@@ -70,8 +72,9 @@ def _verdict_text(row: dict) -> str:
     return "GOOD throughout"
 
 
-def _print_table(rows: list[dict], yellow: float, red: float) -> None:
-    print(f"Yellow (odd) above {yellow:.2f}, red (stop) above {red:.2f}. Scores: ~1-2 is typical.\n")
+def _print_table(rows: list[dict], by_source: dict) -> None:
+    print("Lines: " + "; ".join(f"{s} cuts odd above {y:.2f}, stop above {r:.2f}" for s, (y, r) in by_source.items())
+          + f". The phone page uses the {web_source(by_source)} lines. Scores: ~1-2 is typical for a file, ~3 for the phone.\n")
     print(f"{'recording':30s} {'label':9s} {'judged':>7s} {'typical':>8s} {'worst':>6s} {'when':>6s}  meter would have shown")
     for row in rows:
         r = row["run"]
@@ -84,7 +87,7 @@ def _print_table(rows: list[dict], yellow: float, red: float) -> None:
     print("* scored by a model that never heard this recording   + judged live on the phone page")
 
 
-def _print_summary(rows: list[dict], p, yellow: float, red: float) -> None:
+def _print_summary(rows: list[dict], p, by_source: dict) -> None:
     eligible = {r.filename for r in threshold_runs(p)}
     normals = [r for r in rows if r["unseen"] and r["run"].filename in eligible]
     firsts = [r for r in rows if r["unseen"] and r["run"].filename not in eligible]
@@ -112,7 +115,7 @@ def _print_summary(rows: list[dict], p, yellow: float, red: float) -> None:
               f"expect them to settle after ~10-20 good cuts.")
 
 
-def _plot(rows: list[dict], yellow: float, red: float, path: Path) -> None:
+def _plot(rows: list[dict], path: Path) -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -124,8 +127,8 @@ def _plot(rows: list[dict], yellow: float, red: float, path: Path) -> None:
             m = v == verdict
             if m.any():
                 ax.scatter(t[m], s[m], s=8, color=colour, zorder=2, label=verdict)
-        ax.axhline(yellow, color=COLOURS[ODD], ls="--", lw=1)
-        ax.axhline(red, color=COLOURS[STOP], ls="--", lw=1)
+        ax.axhline(row["yellow"], color=COLOURS[ODD], ls="--", lw=1)
+        ax.axhline(row["red"], color=COLOURS[STOP], ls="--", lw=1)
         title = f"{row['run'].filename} [{row['run'].label}]" + ("  (model never heard this one)" if row["unseen"] else "")
         ax.set_title(title + f"  ->  {_verdict_text(row)}", fontsize=10, loc="left")
         ax.set_ylabel("weirdness"); ax.set_ylim(0, max(6, np.nanmax(s) * 1.05))

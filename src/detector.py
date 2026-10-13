@@ -42,6 +42,7 @@ class SawDetector:
         self.mean = self.std = None
         self.clusters: list[dict] = []
         self.yellow = self.red = None
+        self.thresholds_by_source: dict[str, tuple[float, float]] = {}
         self.motor_threshold_db = None
         self.trained_on: list[str] = []
         self.sr = config.SAMPLE_RATE
@@ -121,7 +122,8 @@ class SawDetector:
             "clusters": [{"mean": c["mean"].tolist(), "precision": c["precision"].tolist(), "n_windows": c["n_windows"],
                           "source": c.get("source", "all")} for c in self.clusters],
             "thresholds": {"yellow": self.yellow, "red": self.red,
-                           "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))},
+                           "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS)),
+                           "by_source": {k: {"yellow": y, "red": r} for k, (y, r) in self.thresholds_by_source.items()}},
             "smooth_windows": config.SMOOTH_WINDOWS,
             "motor": {"threshold_db": self.motor_threshold_db, "on_windows": config.MOTOR_ON_WINDOWS,
                       "off_windows": config.MOTOR_OFF_WINDOWS, "max_pulse": config.MAX_PULSE_FOR_ON,
@@ -140,6 +142,7 @@ class SawDetector:
         det.clusters = [{"mean": np.array(c["mean"]), "precision": np.array(c["precision"]), "n_windows": c["n_windows"],
                          "source": c.get("source", "all")} for c in d["clusters"]]
         det.yellow, det.red = d["thresholds"]["yellow"], d["thresholds"]["red"]
+        det.thresholds_by_source = {k: (v["yellow"], v["red"]) for k, v in d["thresholds"].get("by_source", {}).items()}
         det.motor_threshold_db = d["motor"]["threshold_db"]
         det.trained_on = d.get("trained_on", [])
         det.sr = d["audio"]["sr"]

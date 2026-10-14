@@ -122,11 +122,12 @@ def _print_breakthrough(p, det) -> None:
     if not guesses:
         return
     print("\nBLADE-THROUGH INDICATOR (each phone cut judged by a model that never saw it)")
-    for name, (guess, truth) in guesses.items():
+    for name, (guess, truth, back) in guesses.items():
         g = "never fired" if guess is None else f"fired at {fmt_time(guess)} after motor-on"
         t = ("  <- you marked " + fmt_time(truth) + (f", so the guess was {guess - truth:+.0f} s" if guess is not None else ", so it missed")) \
             if truth is not None else "  (no mark from you to check against)"
-        print(f"- {name}: {g}{t}")
+        b = f"  [{back} earlier guess(es) shown and taken back]" if back else ""
+        print(f"- {name}: {g}{t}{b}")
 
 
 def _plot(rows: list[dict], path: Path) -> None:

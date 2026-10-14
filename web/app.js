@@ -25,7 +25,8 @@ let live = [];                             // recent {t, score, verdict} for the
 let t0 = 0, motorOnAt = null;
 let throughAt = null;                      // window index (since motor on) where the user tapped "Blade is through"
 let throughGuess = null;                   // window index where the page's own indicator fired
-let pendingIndex = null;                   // position (in the saved list) of the cut waiting for its GOOD/ODD answer
+let pendingIndex = null;
+let bannerTimer = null;                    // hides the "I take that back" banner after a few seconds                   // position (in the saved list) of the cut waiting for its GOOD/ODD answer
 
 // ---------- start-up ----------
 /** Fetch model.json; if it is newer than the one in memory, swap it in. Called at start-up and
@@ -108,10 +109,15 @@ function onFeatures(f) {
     if (r.cutDone) finishCut(); else { currentCut = null; clearDraft(); }            // too short to be a cut
     motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
-  if (r.through && throughGuess === null && currentCut) {                            // the page's own guess
+  if (r.through && currentCut) {                                                     // the page's own guess
     throughGuess = currentCut.length;
-    $("through-banner").textContent = `I think the blade is through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it.`;
-    $("through-banner").hidden = false;
+    $("through-banner").textContent = `Sounds like the blade is starting to come through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it come free.`;
+    $("through-banner").hidden = false; clearTimeout(bannerTimer);
+  }
+  if (r.retracted && currentCut) {                                                   // ... taken back
+    throughGuess = null;
+    $("through-banner").textContent = "Never mind, it still sounds like cutting. I take that guess back.";
+    clearTimeout(bannerTimer); bannerTimer = setTimeout(() => ($("through-banner").hidden = true), 8000);
   }
   $("load").textContent = r.load === null ? "" : `blade load ${r.load.toFixed(1)}`;
 

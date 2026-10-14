@@ -41,8 +41,10 @@ RANDOM_SEED = 42
 
 # --- blade break-through indicator (src/breakthrough.py) ---
 BT_SMOOTH_WINDOWS = 20      # load number is averaged over the last 10 s
-BT_LOADED_WINDOWS = 120     # the blade must read "in the steel" for 60 s before "through" can fire
-BT_LOADED_LEVEL = -0.3      # ... meaning the load number stayed below this
-BT_HOLD_WINDOWS = 20        # "through" fires after 10 s above BT_FIRE_LEVEL
-BT_FIRE_LEVEL = 0.0
+BT_MIN_RUN_WINDOWS = 240    # no guess in the first 120 s of running
+BT_LOOKBACK_WINDOWS = 360   # the cut's own "low" = BT_LOW_PERCENTILE of the last 180 s of load numbers
+BT_LOW_PERCENTILE = 10
+BT_DELTA = 0.8              # "through" fires when the load is this far above the cut's own low ...
+BT_HOLD_WINDOWS = 20        # ... for 10 s in a row
+BT_RETRACT_DELTA = 0.5      # the guess is taken back if the load falls under low + this for 10 s
 BT_TAIL_WINDOWS = 30        # without a user mark: the last 15 s before motor-off count as "through"

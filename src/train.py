@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config
-from .breakthrough import BreakthroughModel, segments
+from .breakthrough import BreakthroughModel, segments, fired_index, taken_back
 from .detector import SawDetector
 from .phases import RUNNING, fmt_time, label_phases, motor_on_threshold, on_off_times
 from .runlog import Run, features_for, load_runs, usable_mask
@@ -161,9 +161,10 @@ def fit_breakthrough(segs: dict[str, tuple[np.ndarray, np.ndarray]], skip: str |
     return BreakthroughModel().fit([u[0] for u in use], [u[1] for u in use])
 
 
-def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None]]:
+def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None, int]]:
     """For each phone cut: (seconds after motor-on where a model that never saw it would say
-    'blade is through', or None; the user's own mark, or None)."""
+    'blade is through' and not take it back, or None; the user's own mark, or None; how many
+    guesses it showed and then took back)."""
     phone = [r for r in p.train_runs if source_of(r) == "phone"]
     segs = breakthrough_segments(p, det, phone)
     out = {}
@@ -173,9 +174,10 @@ def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float
             continue
         Z = (p.feats[r.filename][:, det.distance_index] - det.mean) / det.std
         ph = p.phases[r.filename]
-        _, fired = m.track(m.load(Z), ph)
+        _, events = m.track(m.load(Z), ph)
+        fired = fired_index(events)
         on = int(np.flatnonzero(ph != "off")[0]) if np.any(ph != "off") else 0
-        out[r.filename] = (None if fired is None else (fired - on) * config.HOP_SECONDS, r.through_at_s)
+        out[r.filename] = (None if fired is None else (fired - on) * config.HOP_SECONDS, r.through_at_s, taken_back(events))
     return out
 
 
@@ -215,10 +217,11 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
         else:
             marked = sum(r.through_at_s is not None for r in phone)
             print(f"Blade-through indicator learned from {len(phone)} phone cuts ({marked} with a 'Blade is through' mark).")
-            for name, (guess, truth) in breakthrough_guesses(p, det).items():
+            for name, (guess, truth, back) in breakthrough_guesses(p, det).items():
                 g = "never" if guess is None else fmt_time(guess)
                 t = "" if truth is None else f"  (you marked {fmt_time(truth)}: {'%+.0f s' % (guess - truth) if guess is not None else 'missed'})"
-                print(f"  {name:28s} a model that never saw it says 'through' at {g}{t}")
+                b = f"  [{back} guess(es) shown then taken back]" if back else ""
+                print(f"  {name:28s} a model that never saw it says 'through' at {g}{t}{b}")
         print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
     return det, p, loo
 

@@ -60,8 +60,8 @@ export class Detector {
 
   /** Feed one window's features (live, in order).
    *  Returns {score, raw, phase, verdict, cutDone, load, through}: load is the blade-load number
-   *  (about -1 in the steel, +1 through; null when not judging), through is true once the
-   *  break-through indicator has fired for this cut. */
+   *  (about -1 in the steel, +1 through; null when not judging), through is true on the window
+   *  the break-through guess fires, retracted on the window it is taken back. */
   push(f) {
     const raw = this.rawScore(f);
     this._recent.push(raw);
@@ -75,8 +75,8 @@ export class Detector {
       this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
       verdict = (score > this.red || this._oddStreak >= this.redAfterYellow) ? STOP : score > this.yellow ? ODD : GOOD;
     }
-    const bt = this.bt ? this.bt.push(this.standardise(f), phase) : { load: null, through: false };
-    return { score, raw, phase, verdict, cutDone, load: bt.load, through: bt.through };
+    const bt = this.bt ? this.bt.push(this.standardise(f), phase) : { load: null, through: false, retracted: false };
+    return { score, raw, phase, verdict, cutDone, load: bt.load, through: bt.through, retracted: bt.retracted };
   }
 
   /** Offline: score a whole recording's features (array of vectors) exactly like Python's evaluate. */
@@ -102,7 +102,8 @@ export class Detector {
       featureList.forEach((f, i) => {
         const r = b.push(this.standardise(f), phases[i]);
         loads.push(r.load);
-        if (r.through && through === null) through = i;
+        if (r.through) through = i;
+        if (r.retracted) through = null;
       });
     }
     return { scores, phases, verdicts, loads, through };
@@ -115,24 +116,38 @@ export class Detector {
  *  stays above fire_level for hold_windows. Resets whenever the motor is not "running". */
 export class Breakthrough {
   constructor(d) { this.d = d; this.reset(); }
-  reset() { this.hist = []; this.loadedRun = 0; this.hold = 0; this.inSteel = false; this.fired = false; }
+  reset() { this.hist = []; this.recent = []; this.run = 0; this.hold = 0; this.fired = false; this.lowAtFire = 0; }
+  /** Returns {load, through, retracted}: through is true on the window the guess fires,
+   *  retracted on the window it is taken back (load fell back toward the cut's own low). */
   push(z, phase) {
     const d = this.d;
-    if (phase !== RUNNING) { this.hist = []; this.loadedRun = 0; this.hold = 0; this.inSteel = false; return { load: null, through: false }; }
+    if (phase !== RUNNING) { this.reset(); return { load: null, through: false, retracted: false }; }
     let raw = 0;
     for (let j = 0; j < d.w.length; j++) raw += d.w[j] * (z[j] - d.mid[j]);
     this.hist.push(raw);
     if (this.hist.length > d.smooth_windows) this.hist.shift();
     const load = this.hist.reduce((a, b) => a + b, 0) / this.hist.length;
-    if (!this.inSteel) {
-      this.loadedRun = load < d.loaded_level ? this.loadedRun + 1 : 0;
-      if (this.loadedRun >= d.loaded_windows) this.inSteel = true;
+    this.run++;
+    this.recent.push(load);
+    if (this.recent.length > d.lookback_windows) this.recent.shift();
+    const low = percentile(this.recent, d.low_percentile);
+    let through = false, retracted = false;
+    if (!this.fired) {
+      this.hold = (this.run >= d.min_run_windows && load > low + d.delta) ? this.hold + 1 : 0;
+      if (this.hold >= d.hold_windows) { this.fired = true; this.lowAtFire = low; this.hold = 0; through = true; }
     } else {
-      this.hold = load > d.fire_level ? this.hold + 1 : 0;
-      if (this.hold >= d.hold_windows) this.fired = true;
+      this.hold = load < this.lowAtFire + d.retract_delta ? this.hold + 1 : 0;
+      if (this.hold >= d.hold_windows) { this.fired = false; this.hold = 0; retracted = true; }
     }
-    return { load, through: this.fired };
+    return { load, through, retracted };
   }
+}
+
+/** numpy.percentile with its default linear interpolation. */
+function percentile(values, q) {
+  const s = Array.from(values).sort((a, b) => a - b);
+  const pos = (s.length - 1) * q / 100, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return s[lo] + (s[hi] - s[lo]) * (pos - lo);
 }
 
 /** Live motor on/off tracker (same hysteresis rule as src/phases.py, but it can't see the future,

@@ -15,7 +15,7 @@
   <main id="meter" class="meter">
     <div class="meter-top">
       <span id="phase" class="phase">Not listening</span>
-      <span id="clock" class="clock"></span>
+      <span><span id="clock" class="clock"></span> <span id="version" class="version"></span></span>
     </div>
     <div id="verdict" class="verdict">READY</div>
     <div id="hint" class="hint">Tap Start, then put the phone on the saw at the tape mark.</div>
@@ -41,7 +41,8 @@
 
   <section id="after-cut" class="panel" hidden>
     <h2>How was that cut?</h2>
-    <p class="small">Your answer and notes are saved on this phone (sound measurements only, no audio) so the model can be retrained later.</p>
+    <p class="small" id="after-cut-note">This cut is already saved on the phone. Pick GOOD or ODD to label it.</p>
+    <p class="small">Only sound measurements are kept, no audio. You can label a cut later from the Saved cuts list.</p>
     <label class="field"><span>Sample / material</span>
       <input id="cut-material" type="text" list="material-list" placeholder="e.g. Ultracore 81 Ni1M-H Plus on nickel alloy steel" autocomplete="off">
       <datalist id="material-list"></datalist>
@@ -53,7 +54,7 @@
       <button id="cut-good" class="btn btn-good">That cut was GOOD</button>
       <button id="cut-odd" class="btn btn-odd">That cut was ODD</button>
     </div>
-    <p class="small"><button id="cut-skip" class="link">Skip, don't save this one</button></p>
+    <p class="small"><button id="cut-skip" class="link">Delete this cut</button> (asks first)</p>
   </section>
 
   <section class="panel controls">

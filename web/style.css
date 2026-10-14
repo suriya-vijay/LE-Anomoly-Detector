@@ -15,6 +15,7 @@ body[data-state="off"]  .meter, body[data-state="transition"] .meter, body[data-
 @keyframes flash { 50% { background: #7a0000; } }
 
 .meter-top { display: flex; justify-content: space-between; font-size: 1rem; opacity: .9; }
+.version { font-weight: 700; padding: 1px 7px; border-radius: 6px; background: rgba(0,0,0,.35); margin-left: 8px; }
 .verdict { font-size: clamp(3rem, 18vw, 7rem); font-weight: 800; letter-spacing: .02em; text-align: center; line-height: 1; margin: 6px 0; }
 .hint { text-align: center; font-size: 1.1rem; min-height: 2.6em; opacity: .95; }
 
@@ -49,7 +50,7 @@ body[data-state="off"]  .meter, body[data-state="transition"] .meter, body[data-
 .saved-list { list-style: none; padding: 0; margin: 10px 0 0; font-size: .9rem; }
 .saved-list li { padding: 8px 10px; border-radius: 8px; background: #262626; margin-top: 6px; display: flex; gap: 8px; align-items: baseline; }
 .saved-list .tag { font-weight: 700; padding: 2px 8px; border-radius: 6px; color: #fff; font-size: .8rem; }
-.saved-list .tag-normal { background: var(--green); } .saved-list .tag-abnormal { background: #b26a00; }
+.saved-list .tag-normal { background: var(--green); } .saved-list .tag-abnormal { background: #b26a00; } .saved-list .tag-unlabelled { background: #616161; }
 .saved-list .meta { color: var(--muted); }
 .saved-list .del { margin-left: auto; }
 .small { font-size: .85rem; color: var(--muted); }

@@ -2,6 +2,7 @@
 import { FeatureExtractor } from "./features.js";
 import { Detector, OFF, TRANSITION, RUNNING, GOOD, ODD, STOP } from "./detector.js";
 import { MicCapture, Windower, decodeFile } from "./audio.js";
+import { APP_VERSION } from "./version.js";
 
 const $ = (id) => document.getElementById(id);
 const COLOURS = { [OFF]: "#9e9e9e", [TRANSITION]: "#9e9e9e", [GOOD]: "#1e8e3e", [ODD]: "#f1b000", [STOP]: "#ff5252" };
@@ -14,6 +15,8 @@ const TEXT = {
   [STOP]: ["STOP", "Sound is far from normal. Stop and check."],
 };
 const SAVED_KEY = "sawmeter.savedCuts", SENS_KEY = "sawmeter.sensitivity", MATERIAL_KEY = "sawmeter.lastMaterial";
+const DRAFT_KEY = "sawmeter.draft";        // the cut in progress, written every 5 s so a reload cannot lose it
+const UNLABELLED = "unlabelled";
 
 let model, fx, det, mic, windower, wakeLock;
 let listening = false, lastVibrate = 0, beepCtx;
@@ -22,6 +25,7 @@ let live = [];                             // recent {t, score, verdict} for the
 let t0 = 0, motorOnAt = null;
 let throughAt = null;                      // window index (since motor on) where the user tapped "Blade is through"
 let throughGuess = null;                   // window index where the page's own indicator fired
+let pendingIndex = null;                   // position (in the saved list) of the cut waiting for its GOOD/ODD answer
 
 // ---------- start-up ----------
 /** Fetch model.json; if it is newer than the one in memory, swap it in. Called at start-up and
@@ -36,7 +40,7 @@ async function refreshModel() {
   det = new Detector(model, loadSensitivity());
   $("sensitivity").value = det.sensitivity; $("sens-out").textContent = det.sensitivity.toFixed(2) + "×";
   placeMarks();
-  $("model-info").textContent = `Model learned from ${model.trained_on.length} good cut(s), ${model.trained_at.slice(0, 10)}. ` +
+  $("model-info").textContent = `Page ${APP_VERSION}. Numbers calculated from ${model.trained_on.length} good cut(s) on ${model.trained_at.slice(0, 10)}. ` +
     `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.` +
     (model.breakthrough ? " Blade-through indicator: on." : " Blade-through indicator: not learned yet.");
   return true;
@@ -46,8 +50,14 @@ async function init() {
   await refreshModel();
   if (!("vibrate" in navigator)) $("vibrate-note").textContent = "(not available on iPhone: the screen flashes instead)";
   updateSavedCount();
-  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost"))
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+  recoverDraft();
+  $("version").textContent = APP_VERSION;
+  document.title = `Saw Sound Meter ${APP_VERSION}`;
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => {});
+    // A newer page was installed while this one was open: reload when it is safe (not listening).
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (!listening) location.reload(); });
+  }
 }
 
 // ---------- live listening ----------
@@ -73,22 +83,29 @@ async function start() {
 
 async function stop() {
   listening = false;
+  if (currentCut && currentCut.length >= det.motor.minCutWindows) finishCut();      // stopped mid-cut: keep what we have
+  else { currentCut = null; clearDraft(); }
+  motorOnAt = null;
   await mic?.stop(); wakeLock?.release?.(); wakeLock = null;
   $("start").hidden = false; $("stop").hidden = true;
   setState("idle"); $("phase").textContent = "Not listening"; $("clock").textContent = ""; $("load").textContent = "";
   showThrough(false); $("through-banner").hidden = true;
 }
 
-function onWindow(samples) {
-  const f = fx.extract(samples);
+function onWindow(samples) { onFeatures(fx.extract(samples)); }
+window.sawmeterDebug = { feed: (f) => onFeatures(f) };            // lets the automated page test push measurements
+function onFeatures(f) {
   const r = det.push(f);
   const t = (performance.now() - t0) / 1000;
   if (r.phase !== OFF && motorOnAt === null) {                                       // motor just started
     motorOnAt = t; currentCut = []; throughAt = null; throughGuess = null; showThrough(true); $("through-banner").hidden = true;
   }
-  if (currentCut) currentCut.push(Array.from(f, (v) => Math.round(v * 1000) / 1000));
+  if (currentCut) {
+    currentCut.push(Array.from(f, (v) => Math.round(v * 1000) / 1000));
+    if (currentCut.length % 10 === 0) saveDraft();
+  }
   if (r.phase === OFF && motorOnAt !== null) {                                       // motor stopped
-    if (r.cutDone) finishCut(); else currentCut = null;                              // too short to be a cut
+    if (r.cutDone) finishCut(); else { currentCut = null; clearDraft(); }            // too short to be a cut
     motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
   if (r.through && throughGuess === null && currentCut) {                            // the page's own guess
@@ -118,10 +135,47 @@ function markThrough() {
   throughAt = currentCut.length;
   $("through-note").textContent = `Marked at ${fmt(throughAt * model.audio.hop_s)} (motor time). Tap again to move it.`;
 }
-function finishCut() {
-  if (!currentCut || currentCut.length < 20) { currentCut = null; return; }
-  const banner = $("cut-banner"); banner.hidden = false; setTimeout(() => (banner.hidden = true), 10000);
+/** The motor stopped (or Stop was tapped mid-cut): store the cut NOW, before any button is
+ *  tapped, so a wrong tap, a closed tab or a dead battery cannot lose it. The GOOD/ODD panel
+ *  then only edits the label of that stored cut. */
+function finishCut(startedAt = null, recovered = false) {
+  if (!currentCut || currentCut.length < 20) { currentCut = null; clearDraft(); return; }
+  const cut = { label: UNLABELLED, material: localStorage.getItem(MATERIAL_KEY) || "", notes: "",
+    at: startedAt || new Date().toISOString(), duration_s: Math.round(currentCut.length * model.audio.hop_s),
+    through_at_s: throughAt === null ? null : Math.round(throughAt * model.audio.hop_s * 10) / 10,
+    through_guess_s: throughGuess === null ? null : Math.round(throughGuess * model.audio.hop_s * 10) / 10,
+    sensitivity: det.sensitivity, model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut };
+  const cuts = loadSaved(); cuts.push(cut);
+  if (persist(cuts)) pendingIndex = cuts.length - 1;
+  else { pendingIndex = null; downloadCuts([cut], "cut"); alert("Phone storage is full, so this cut was downloaded as a file instead of saved on the phone. Download the saved cuts, then Clear, before the next cut."); }
+  currentCut = null; throughAt = null; throughGuess = null; clearDraft(); updateSavedCount();
+  if (!recovered) { const banner = $("cut-banner"); banner.hidden = false; setTimeout(() => (banner.hidden = true), 10000); }
+  if (pendingIndex !== null) openLabelPanel(pendingIndex, recovered ? "Recovered a cut that was never labelled. It is saved. How was it?" : "");
+}
+
+/** Show the GOOD/ODD panel for saved cut number i. */
+function openLabelPanel(i, note = "") {
+  pendingIndex = i;
+  const c = loadSaved()[i];
+  $("cut-material").value = c?.material || localStorage.getItem(MATERIAL_KEY) || "";
+  $("cut-notes").value = c?.notes || "";
+  $("after-cut-note").textContent = note || "This cut is already saved on the phone. Pick GOOD or ODD to label it.";
   $("after-cut").hidden = false;
+  $("after-cut").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function persist(cuts) { try { localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); return true; } catch { return false; } }
+function saveDraft() {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: new Date().toISOString(), throughAt, throughGuess, features: currentCut })); } catch {}
+}
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch {} }
+/** After a reload or a crash: a draft of at least one minimum cut becomes a saved, unlabelled cut. */
+function recoverDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch {}
+  if (!d || !Array.isArray(d.features) || d.features.length < det.motor.minCutWindows) { clearDraft(); return; }
+  currentCut = d.features; throughAt = d.throughAt ?? null; throughGuess = d.throughGuess ?? null;
+  finishCut(d.at, true);
 }
 
 function alertStop() {
@@ -143,16 +197,18 @@ function beep() {
 
 // ---------- after-cut feedback ----------
 function saveCut(label) {
-  if (!currentCut) return;
-  const material = $("cut-material").value.trim(), notes = $("cut-notes").value.trim();
   const cuts = loadSaved();
-  cuts.push({ label, material, notes, at: new Date().toISOString(), duration_s: Math.round(currentCut.length * model.audio.hop_s),
-    through_at_s: throughAt === null ? null : Math.round(throughAt * model.audio.hop_s * 10) / 10,
-    through_guess_s: throughGuess === null ? null : Math.round(throughGuess * model.audio.hop_s * 10) / 10,
-    sensitivity: det.sensitivity, model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut });
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); } catch { alert("Phone storage is full. Download the saved cuts, then Clear."); }
+  if (pendingIndex === null || !cuts[pendingIndex]) { $("after-cut").hidden = true; return; }
+  const material = $("cut-material").value.trim(), notes = $("cut-notes").value.trim();
+  Object.assign(cuts[pendingIndex], { label, material, notes });
+  if (!persist(cuts)) alert("Phone storage is full. Download the saved cuts, then Clear.");
   localStorage.setItem(MATERIAL_KEY, material);              // remembered for the next cut
-  currentCut = null; throughAt = null; $("after-cut").hidden = true; $("cut-notes").value = ""; updateSavedCount();
+  pendingIndex = null; $("after-cut").hidden = true; $("cut-notes").value = ""; updateSavedCount();
+}
+function deletePending() {
+  const cuts = loadSaved();
+  if (pendingIndex !== null && cuts[pendingIndex] && confirm("Delete this cut for good?")) { cuts.splice(pendingIndex, 1); persist(cuts); }
+  pendingIndex = null; $("after-cut").hidden = true; updateSavedCount();
 }
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]"); } catch { return []; } };
 function updateSavedCount() {
@@ -162,13 +218,16 @@ function updateSavedCount() {
   cuts.slice().reverse().forEach((c, i) => {
     const li = document.createElement("li");
     const when = new Date(c.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    li.innerHTML = `<span class="tag tag-${c.label}">${c.label === "normal" ? "GOOD" : "ODD"}</span>` +
+    const idx = cuts.length - 1 - i;
+    li.innerHTML = `<span class="tag tag-${c.label}">${c.label === "normal" ? "GOOD" : c.label === "abnormal" ? "ODD" : "NOT LABELLED"}</span>` +
       `<span><b>${esc(c.material) || "(no material)"}</b> <span class="meta">${when}, ${fmt(c.duration_s || 0)}` +
       (c.through_at_s != null ? `, blade through at ${fmt(c.through_at_s)}` : "") +
       (c.through_guess_s != null ? ` (page guessed ${fmt(c.through_guess_s)})` : "") + `</span>` +
-      (c.notes ? `<br><span class="meta">${esc(c.notes)}</span>` : "") + `</span>` +
+      (c.notes ? `<br><span class="meta">${esc(c.notes)}</span>` : "") +
+      (c.label === UNLABELLED ? ` <button class="link relabel">Label it</button>` : "") + `</span>` +
       `<button class="link del" title="Delete this saved cut">✕</button>`;
-    li.querySelector(".del").onclick = () => { cuts.splice(cuts.length - 1 - i, 1); localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); updateSavedCount(); };
+    li.querySelector(".del").onclick = () => { if (!confirm("Delete this saved cut for good?")) return; cuts.splice(idx, 1); persist(cuts); if (pendingIndex === idx) { pendingIndex = null; $("after-cut").hidden = true; } updateSavedCount(); };
+    li.querySelector(".relabel")?.addEventListener("click", () => openLabelPanel(idx));
     list.appendChild(li);
   });
   // material suggestions = ones used before
@@ -177,10 +236,11 @@ function updateSavedCount() {
   if (!$("cut-material").value) $("cut-material").value = localStorage.getItem(MATERIAL_KEY) || cuts.at(-1)?.material || "";
 }
 const esc = (s) => String(s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
-function downloadSaved() {
-  const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), cuts: loadSaved() })], { type: "application/json" });
+function downloadSaved() { downloadCuts(loadSaved(), "saved-cuts"); }
+function downloadCuts(cuts, prefix) {
+  const blob = new Blob([JSON.stringify({ exported: new Date().toISOString(), cuts })], { type: "application/json" });
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob); a.download = `saved-cuts-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+  a.href = URL.createObjectURL(blob); a.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.json`; a.click();
 }
 
 // ---------- test with a recording ----------
@@ -252,9 +312,9 @@ $("sensitivity").oninput = (e) => { const v = parseFloat(e.target.value); det.se
 $("sens-reset").onclick = () => { $("sensitivity").value = 1; $("sensitivity").dispatchEvent(new Event("input")); };
 $("cut-good").onclick = () => saveCut("normal");
 $("cut-odd").onclick = () => saveCut("abnormal");
-$("cut-skip").onclick = () => { currentCut = null; throughAt = null; $("after-cut").hidden = true; };
+$("cut-skip").onclick = deletePending;
 $("through").onclick = markThrough;
 $("download").onclick = downloadSaved;
-$("clear-saved").onclick = () => { if (confirm("Delete all saved cuts on this phone?")) { localStorage.removeItem(SAVED_KEY); updateSavedCount(); } };
+$("clear-saved").onclick = () => { if (confirm("Delete ALL saved cuts on this phone? Download them first if you have not.")) { localStorage.removeItem(SAVED_KEY); pendingIndex = null; $("after-cut").hidden = true; updateSavedCount(); } };
 $("file").onchange = (e) => e.target.files[0] && testFile(e.target.files[0]);
 init().catch((e) => ($("model-info").textContent = "Could not load model.json: " + e.message));

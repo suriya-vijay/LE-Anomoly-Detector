@@ -21,7 +21,8 @@ MOTOR_OFF_WINDOWS = 4     # ... and below it this many windows (2 s) to count as
 MAX_PULSE_FOR_ON = 0.35   # a door slam / table bump (big pulse_depth) can't switch the motor "on"
 SPINUP_S = 10.0           # first seconds after ON are "transition" (spin-up / blade lowering), not judged
 SPINDOWN_WINDOWS = 2      # last windows before OFF are "transition" (spin-down)
-MIN_CUT_S = 30.0          # OFF after at least this long ON counts as "cut finished"
+MIN_CUT_S = 30.0
+MOTOR_OFF_BELOW_LOUD_DB = 6.5  # phone cuts: motor counts as OFF this far under the loud centre (through-phase is ~4 dB under, off >= 8)          # OFF after at least this long ON counts as "cut finished"
 
 # Detector: which measurements go into the "distance from normal".
 # dominant_hz and pulse_hz jump around on real recordings, so they're shown but not scored.

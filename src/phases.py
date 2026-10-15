@@ -44,8 +44,12 @@ def motor_on_threshold(rms_db: np.ndarray) -> float:
         if np.isclose(new_lo, lo) and np.isclose(new_hi, hi):
             break
         lo, hi = new_lo, new_hi
-    if hi - lo < MIN_ON_OFF_GAP_DB:          # no real quiet part: assume everything is "on"
-        return float(hi - MIN_ON_OFF_GAP_DB)
+    if hi - lo < MIN_ON_OFF_GAP_DB:
+        # No real quiet group (cuts saved by the phone page have only seconds of motor-off, so
+        # the 2-means lumps the quiet "blade is through" end of the cut in with motor-off).
+        # Then the line is set a fixed distance under the loud centre: the through-phase is
+        # about 4 dB under it, motor-off 8 dB and more, so 6.5 dB keeps both on the right side.
+        return float(hi - config.MOTOR_OFF_BELOW_LOUD_DB)
     return float((lo + hi) / 2)
 
 

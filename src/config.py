@@ -45,7 +45,7 @@ BT_SMOOTH_WINDOWS = 20      # load number is averaged over the last 10 s
 BT_MIN_RUN_WINDOWS = 120    # no guess in the first 60 s of running (was 120 s: cut 13 ended at 1:32 with no guess)
 BT_LOOKBACK_WINDOWS = 360   # the cut's own "low" = BT_LOW_PERCENTILE of the last 180 s of load numbers
 BT_LOW_PERCENTILE = 10
-BT_DELTA = 0.8              # "through" fires when the load is this far above the cut's own low ...
-BT_HOLD_WINDOWS = 20        # ... for 10 s in a row
+BT_DELTA = 1.0              # "through" fires when the load is this far above the cut's own low ... (0.8 until 2026-10-15: guesses ran 20 s early)
+BT_HOLD_WINDOWS = 30        # ... for 15 s in a row (was 10 s)
 BT_RETRACT_DELTA = 0.5      # the guess is taken back if the load falls under low + this for 10 s
 BT_TAIL_WINDOWS = 30        # without a user mark: the last 15 s before motor-off count as "through"

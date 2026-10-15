@@ -174,7 +174,7 @@ def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float
             continue
         Z = (p.feats[r.filename][:, det.distance_index] - det.mean) / det.std
         ph = p.phases[r.filename]
-        _, events = m.track(m.load(Z), ph)
+        _, events = m.track(m.load(Z), ph, p.feats[r.filename][:, 0])
         fired = fired_index(events)
         on = int(np.flatnonzero(ph != "off")[0]) if np.any(ph != "off") else 0
         out[r.filename] = (None if fired is None else (fired - on) * config.HOP_SECONDS, r.through_at_s, taken_back(events))

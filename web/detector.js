@@ -75,7 +75,7 @@ export class Detector {
       this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
       verdict = (score > this.red || this._oddStreak >= this.redAfterYellow) ? STOP : score > this.yellow ? ODD : GOOD;
     }
-    const bt = this.bt ? this.bt.push(this.standardise(f), phase) : { load: null, through: false, retracted: false };
+    const bt = this.bt ? this.bt.push(this.standardise(f), phase, f[this.iRms]) : { load: null, through: false, retracted: false };
     return { score, raw, phase, verdict, cutDone, load: bt.load, through: bt.through, retracted: bt.retracted };
   }
 
@@ -100,7 +100,7 @@ export class Detector {
       const b = new Breakthrough(this.model.breakthrough);
       loads = []; through = null;
       featureList.forEach((f, i) => {
-        const r = b.push(this.standardise(f), phases[i]);
+        const r = b.push(this.standardise(f), phases[i], f[this.iRms]);
         loads.push(r.load);
         if (r.through) through = i;
         if (r.retracted) through = null;
@@ -116,12 +116,21 @@ export class Detector {
  *  stays above fire_level for hold_windows. Resets whenever the motor is not "running". */
 export class Breakthrough {
   constructor(d) { this.d = d; this.reset(); }
-  reset() { this.hist = []; this.recent = []; this.run = 0; this.hold = 0; this.fired = false; this.lowAtFire = 0; }
+  reset() { this.hist = []; this.recent = []; this.rms = []; this.run = 0; this.hold = 0; this.fired = false; this.lowAtFire = 0; }
   /** Returns {load, through, retracted}: through is true on the window the guess fires,
    *  retracted on the window it is taken back (load fell back toward the cut's own low). */
-  push(z, phase) {
+  push(z, phase, rmsDb) {
     const d = this.d;
     if (phase !== RUNNING) { this.reset(); return { load: null, through: false, retracted: false }; }
+    // "got quieter" gate: the last 10 s must be quiet_db below the median of the 60 s before that
+    let quiet = true;
+    if (d.quiet_db > 0 && rmsDb !== undefined) {
+      this.rms.push(rmsDb);
+      if (this.rms.length > d.smooth_windows + d.quiet_ref_windows) this.rms.shift();
+      const ref = this.rms.slice(0, Math.max(0, this.rms.length - d.smooth_windows));
+      const cur = this.rms.slice(-d.smooth_windows);
+      quiet = ref.length >= d.smooth_windows && cur.reduce((a, b) => a + b, 0) / cur.length < median(ref) - d.quiet_db;
+    }
     let raw = 0;
     for (let j = 0; j < d.w.length; j++) raw += d.w[j] * (z[j] - d.mid[j]);
     this.hist.push(raw);
@@ -133,7 +142,7 @@ export class Breakthrough {
     const low = percentile(this.recent, d.low_percentile);
     let through = false, retracted = false;
     if (!this.fired) {
-      this.hold = (this.run >= d.min_run_windows && load > low + d.delta) ? this.hold + 1 : 0;
+      this.hold = (this.run >= d.min_run_windows && load > low + d.delta && quiet) ? this.hold + 1 : 0;
       if (this.hold >= d.hold_windows) { this.fired = true; this.lowAtFire = low; this.hold = 0; through = true; }
     } else {
       this.hold = load < this.lowAtFire + d.retract_delta ? this.hold + 1 : 0;
@@ -142,6 +151,9 @@ export class Breakthrough {
     return { load, through, retracted };
   }
 }
+
+/** numpy.median */
+function median(values) { return percentile(values, 50); }
 
 /** numpy.percentile with its default linear interpolation. */
 function percentile(values, q) {

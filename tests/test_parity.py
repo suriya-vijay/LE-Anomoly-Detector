@@ -53,7 +53,7 @@ def test_js_matches_python(tmp_path):
     assert js["phases"] == list(py_phases)
     assert js["verdicts"] == list(py_verdicts)
     Z = (py_feats[:, det.distance_index] - det.mean) / det.std
-    py_load, py_events = bt.track(bt.load(Z), py_phases)
+    py_load, py_events = bt.track(bt.load(Z), py_phases, py_feats[:, 0])
     py_fire = fired_index(py_events)
     js_load = np.array([np.nan if v is None else v for v in js["loads"]], dtype=float)
     np.testing.assert_allclose(js_load, py_load, rtol=1e-3, atol=2e-3, equal_nan=True)

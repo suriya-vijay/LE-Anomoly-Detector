@@ -55,11 +55,13 @@ class BreakthroughModel:
         """Raw per-window load number for standardised features Z (n_windows, n_features)."""
         return (Z - self.mid) @ self.w
 
-    def track(self, raw: np.ndarray, phases: np.ndarray) -> tuple[np.ndarray, list[list[int | None]]]:
+    def track(self, raw: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None) -> tuple[np.ndarray, list[list[int | None]]]:
         """Causal state machine, identical to the phone. Returns (smoothed load, events), where
-        events is a list of [fired_index, taken_back_index or None], in order."""
+        events is a list of [fired_index, taken_back_index or None], in order.
+        rms (raw rms_db per window) enables the 'got quieter' gate; without it the gate is off."""
         out = np.full(len(raw), np.nan)
         hist: list[float] = []
+        rms_hist: list[float] = []
         recent: list[float] = []
         run = hold = 0
         fired = False
@@ -67,15 +69,20 @@ class BreakthroughModel:
         events: list[list[int | None]] = []
         for i, (r, p) in enumerate(zip(raw, phases)):
             if p != RUNNING:
-                hist, recent, run, hold, fired = [], [], 0, 0, False
+                hist, recent, rms_hist, run, hold, fired = [], [], [], 0, 0, False
                 continue
             hist.append(float(r)); hist = hist[-config.BT_SMOOTH_WINDOWS:]
+            quiet = True
+            if rms is not None and config.BT_QUIET_DB > 0:
+                rms_hist.append(float(rms[i])); rms_hist = rms_hist[-(config.BT_SMOOTH_WINDOWS + config.BT_QUIET_REF_WINDOWS):]
+                ref = rms_hist[:-config.BT_SMOOTH_WINDOWS]
+                quiet = len(ref) >= config.BT_SMOOTH_WINDOWS and                     float(np.mean(rms_hist[-config.BT_SMOOTH_WINDOWS:])) < float(np.median(ref)) - config.BT_QUIET_DB
             sm = float(np.mean(hist)); out[i] = sm
             run += 1
             recent.append(sm); recent = recent[-config.BT_LOOKBACK_WINDOWS:]
             low = float(np.percentile(recent, config.BT_LOW_PERCENTILE))
             if not fired:
-                hold = hold + 1 if (run >= config.BT_MIN_RUN_WINDOWS and sm > low + config.BT_DELTA) else 0
+                hold = hold + 1 if (run >= config.BT_MIN_RUN_WINDOWS and sm > low + config.BT_DELTA and quiet) else 0
                 if hold >= config.BT_HOLD_WINDOWS:
                     fired, low_at_fire, hold = True, low, 0
                     events.append([i, None])
@@ -92,7 +99,8 @@ class BreakthroughModel:
                 "smooth_windows": config.BT_SMOOTH_WINDOWS, "hold_windows": config.BT_HOLD_WINDOWS,
                 "min_run_windows": config.BT_MIN_RUN_WINDOWS, "lookback_windows": config.BT_LOOKBACK_WINDOWS,
                 "low_percentile": config.BT_LOW_PERCENTILE, "delta": config.BT_DELTA,
-                "retract_delta": config.BT_RETRACT_DELTA}
+                "retract_delta": config.BT_RETRACT_DELTA, "quiet_db": config.BT_QUIET_DB,
+                "quiet_ref_windows": config.BT_QUIET_REF_WINDOWS}
 
     @classmethod
     def from_dict(cls, d: dict) -> "BreakthroughModel":

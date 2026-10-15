@@ -42,7 +42,7 @@ RANDOM_SEED = 42
 
 # --- blade break-through indicator (src/breakthrough.py) ---
 BT_SMOOTH_WINDOWS = 20      # load number is averaged over the last 10 s
-BT_MIN_RUN_WINDOWS = 240    # no guess in the first 120 s of running
+BT_MIN_RUN_WINDOWS = 120    # no guess in the first 60 s of running (was 120 s: cut 13 ended at 1:32 with no guess)
 BT_LOOKBACK_WINDOWS = 360   # the cut's own "low" = BT_LOW_PERCENTILE of the last 180 s of load numbers
 BT_LOW_PERCENTILE = 10
 BT_DELTA = 0.8              # "through" fires when the load is this far above the cut's own low ...

@@ -18,9 +18,8 @@ import numpy as np
 from . import config
 from .detector import GOOD, ODD, STOP, SawDetector
 from .phases import OFF, RUNNING, fmt_time
-from .train import (ROOT, breakthrough_guesses, leave_one_out_models, leave_one_out_scores, source_of, threshold_runs,
-from .train import scorecard, scorecard_text
-                    thresholds_by_source, train, web_source)
+from .train import (ROOT, breakthrough_guesses, leave_one_out_models, leave_one_out_scores, scorecard, scorecard_text,
+                    source_of, threshold_runs, thresholds_by_source, train, web_source)
 
 REPORT_PATH = ROOT / "reports" / "weirdness.png"
 COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
@@ -41,7 +40,7 @@ def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_P
         phases = p.phases[r.filename].copy()
         phases[~p.usable[r.filename]] = OFF                     # trimmed parts are not judged
         scores = model.score(feats)
-        verdicts = model.verdicts(scores, phases)
+        verdicts = model.verdicts(scores, phases, feats[:, 0])
         judged = phases == RUNNING
         js = scores[judged]
         first = {v: (times[verdicts == v][0] if np.any(verdicts == v) else None) for v in (ODD, STOP)}

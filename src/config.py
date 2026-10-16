@@ -35,6 +35,13 @@ YELLOW_PERCENTILE = 99.0
 RED_PERCENTILE = 99.9
 RED_AFTER_YELLOW_SECONDS = 3.0
 RED_MIN_RATIO = 1.25      # red is never closer than 25% above yellow (matters with few recordings)
+LINE_SPREAD_SDS = 1.0     # yellow = median of the per-cut 99th percentiles + this many robust (MAD) SDs of them;
+                          # a pooled percentile let a few quiet cuts drag the line down (2026-10-15: 6 of 14 good cuts STOP unseen)
+LOUD_RISE_DB = 6.0        # plain 'too loud' STOP: 10 s loudness this far above the cut's own first-minute median
+                          # (cut 11, the real should-stop event: +8.4 dB for 16 s; loudest good cut +4.0 dB)
+LOUD_RISE_HOLD_SECONDS = 2.0
+LOUD_BASE_SECONDS = 60.0  # the cut's own loudness reference = median of its first minute of running
+LOUD_SMOOTH_SECONDS = 10.0
 
 # Fraction of normal runs held back for the final honest test
 HOLDOUT_FRACTION = 0.30

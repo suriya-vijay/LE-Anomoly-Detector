@@ -68,5 +68,26 @@ def test_verdict_rules():
     assert v[-1] == GOOD
 
 
+def test_too_loud_rule():
+    from src.detector import loud_windows
+    hold, base_n, sm_n = loud_windows()
+    det = SawDetector()
+    det.yellow, det.red = 3.0, 5.0
+    n = base_n + 3 * sm_n
+    scores = np.ones(n)                                                    # the score never looks weird
+    phases = np.array([RUNNING] * n, dtype=object)
+    flat = np.full(n, -20.0)
+    assert set(det.verdicts(scores, phases, flat)) == {GOOD}               # steady loudness: nothing
+    loud = flat.copy(); loud[base_n:] = -20.0 + config.LOUD_RISE_DB + 1    # then 7 dB louder than its own first minute
+    v = det.verdicts(scores, phases, loud)
+    assert set(v[:base_n]) == {GOOD}
+    first = int(np.flatnonzero(v == STOP)[0])
+    assert base_n + sm_n <= first <= base_n + sm_n + hold                  # STOP once the 10 s mean is over, held 2 s
+    assert set(v[first:]) == {STOP}
+    small = flat.copy(); small[base_n:] = -20.0 + config.LOUD_RISE_DB - 1  # 5 dB louder is still cutting
+    assert set(det.verdicts(scores, phases, small)) == {GOOD}
+    assert set(det.verdicts(scores, phases)) == {GOOD}                     # no loudness given: rule off
+
+
 def test_smooth_is_trailing():
     np.testing.assert_allclose(smooth(np.array([3.0, 0, 0, 0]), 3), [3, 1.5, 1, 0])

@@ -16,6 +16,8 @@ export class Detector {
     this.n = this.idx.length;
     this.smoothK = model.smooth_windows;
     this.redAfterYellow = model.thresholds.red_after_yellow_windows;
+    const t = model.thresholds;
+    this.loud = { db: t.loud_rise_db || 0, hold: t.loud_hold_windows || 0, base: t.loud_base_windows || 0, smooth: t.loud_smooth_windows || 0 };
     this.setSensitivity(sensitivity);
     this.iRms = model.feature_names.indexOf("rms_db");
     this.iPulse = model.feature_names.indexOf("pulse_depth");
@@ -31,7 +33,7 @@ export class Detector {
     this.red = this.model.thresholds.red / s;
   }
 
-  reset() { this._recent = []; this._oddStreak = 0; this.motor = new MotorTracker(this.model); this.bt?.reset(); }
+  reset() { this._recent = []; this._oddStreak = 0; this._loud = new LoudRise(this.loud); this.motor = new MotorTracker(this.model); this.bt?.reset(); }
 
   /** Standardised feature vector (the space the clusters and the break-through direction live in). */
   standardise(f) {
@@ -69,16 +71,17 @@ export class Detector {
     if (this._recent.length > this.smoothK) this._recent.shift();
     const score = this._recent.reduce((a, b) => a + b, 0) / this._recent.length;
     const { phase, cutDone } = this.motor.push(f[this.iRms], f[this.iPulse]);
-    let verdict = OFF;
+    let verdict = OFF, loud = false;
     if (phase !== RUNNING) {
-      this._oddStreak = 0;
+      this._oddStreak = 0; this._loud.reset();
     } else {
       this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
-      verdict = (score > this.red || this._oddStreak >= this.redAfterYellow) ? STOP : score > this.yellow ? ODD : GOOD;
+      loud = this._loud.push(f[this.iRms]);
+      verdict = (score > this.red || this._oddStreak >= this.redAfterYellow || loud) ? STOP : score > this.yellow ? ODD : GOOD;
     }
     const bt = this.bt ? this.bt.push(this.standardise(f), phase, f[this.iRms], f[this.iCentroid])
       : { load: null, progress: 0, stage: 0, headsUp: false, through: false, retracted: false };
-    return { score, raw, phase, verdict, cutDone, load: bt.load, progress: bt.progress, stage: bt.stage,
+    return { score, raw, phase, verdict, loud, cutDone, load: bt.load, progress: bt.progress, stage: bt.stage,
              headsUp: bt.headsUp, through: bt.through, retracted: bt.retracted };
   }
 
@@ -92,11 +95,12 @@ export class Detector {
     });
     const phases = labelPhasesOffline(featureList, this.model, this.iRms, this.iPulse);
     const verdicts = [];
-    let streak = 0;
+    let streak = 0; const lr = new LoudRise(this.loud);
     for (let i = 0; i < scores.length; i++) {
-      if (phases[i] !== RUNNING) { streak = 0; verdicts.push(OFF); continue; }
+      if (phases[i] !== RUNNING) { streak = 0; lr.reset(); verdicts.push(OFF); continue; }
       streak = scores[i] > this.yellow ? streak + 1 : 0;
-      verdicts.push((scores[i] > this.red || streak >= this.redAfterYellow) ? STOP : scores[i] > this.yellow ? ODD : GOOD);
+      const loud = lr.push(featureList[i][this.iRms]);
+      verdicts.push((scores[i] > this.red || streak >= this.redAfterYellow || loud) ? STOP : scores[i] > this.yellow ? ODD : GOOD);
     }
     let loads = null, through = null, headsUp = null;
     if (this.bt) {
@@ -118,6 +122,22 @@ export class Detector {
  *  load = w . (z - mid): about -1 while the blade is in the steel, about +1 once through.
  *  "through" fires only after the load has read "in the steel" for loaded_windows, then
  *  stays above fire_level for hold_windows. Resets whenever the motor is not "running". */
+/** The plain 'too loud' rule: true while the last 10 s of loudness sit loud.db above the median of the
+ *  cut's own first minute, after loud.hold windows in a row. Same state machine as SawDetector.verdicts. */
+class LoudRise {
+  constructor(d) { this.d = d; this.reset(); }
+  reset() { this.base = []; this.sm = []; this.streak = 0; }
+  push(rmsDb) {
+    const d = this.d;
+    if (!(d.db > 0) || rmsDb === undefined) return false;
+    if (this.base.length < d.base) this.base.push(rmsDb);
+    this.sm.push(rmsDb); if (this.sm.length > d.smooth) this.sm.shift();
+    const over = this.base.length >= d.base && this.sm.length >= d.smooth && mean(this.sm) > median(this.base) + d.db;
+    this.streak = over ? this.streak + 1 : 0;
+    return this.streak >= d.hold;
+  }
+}
+
 export class Breakthrough {
   constructor(d) { this.d = d; this.reset(); }
   reset() { this.hist = []; this.recent = []; this.rms = []; this.cen = []; this.run = 0; this.hold = 0; this.hold2 = 0; this.fired = false; this.banner = false; this.lowAtFire = 0; }

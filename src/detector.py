@@ -85,20 +85,30 @@ class SawDetector:
         """Smoothed score: trailing average over SMOOTH_WINDOWS (same as the phone does live)."""
         return smooth(self.raw_scores(features))
 
-    def verdicts(self, scores: np.ndarray, phases: np.ndarray) -> np.ndarray:
-        """Per window: "off" (not judged), "good", "odd" or "stop"."""
+    def verdicts(self, scores: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None) -> np.ndarray:
+        """Per window: "off" (not judged), "good", "odd" or "stop". STOP when the score crosses red, when it
+        sits over yellow for RED_AFTER_YELLOW_SECONDS, or (when rms is given) when the cut gets LOUD_RISE_DB
+        louder than its own first minute for LOUD_RISE_HOLD_SECONDS: the plain 'too loud' rule."""
         red_run = int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))
+        loud_hold, base_n, sm_n = loud_windows()
         out = np.full(len(scores), OFF, dtype=object)
-        odd_streak = 0
+        odd_streak = loud_streak = 0
+        base: list[float] = []; sm: list[float] = []
         for i, (s, p) in enumerate(zip(scores, phases)):
             if p != RUNNING:
-                odd_streak = 0
+                odd_streak = loud_streak = 0; base = []; sm = []
                 continue
-            if s > self.yellow:
-                odd_streak += 1
-            else:
-                odd_streak = 0
-            out[i] = STOP if (s > self.red or odd_streak >= red_run) else ODD if s > self.yellow else GOOD
+            odd_streak = odd_streak + 1 if s > self.yellow else 0
+            loud = False
+            if rms is not None and config.LOUD_RISE_DB > 0:
+                if len(base) < base_n:
+                    base.append(float(rms[i]))
+                sm.append(float(rms[i])); sm = sm[-sm_n:]
+                over = len(base) >= base_n and len(sm) >= sm_n and \
+                    float(np.mean(sm)) > float(np.median(base)) + config.LOUD_RISE_DB
+                loud_streak = loud_streak + 1 if over else 0
+                loud = loud_streak >= loud_hold
+            out[i] = STOP if (s > self.red or odd_streak >= red_run or loud) else ODD if s > self.yellow else GOOD
         return out
 
     # ----- saving / loading (one JSON format for Python and the phone) -----
@@ -124,6 +134,8 @@ class SawDetector:
                           "source": c.get("source", "all")} for c in self.clusters],
             "thresholds": {"yellow": self.yellow, "red": self.red,
                            "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS)),
+                           "loud_rise_db": config.LOUD_RISE_DB, "loud_hold_windows": loud_windows()[0],
+                           "loud_base_windows": loud_windows()[1], "loud_smooth_windows": loud_windows()[2],
                            "by_source": {k: {"yellow": y, "red": r} for k, (y, r) in self.thresholds_by_source.items()}},
             "smooth_windows": config.SMOOTH_WINDOWS,
             "motor": {"threshold_db": self.motor_threshold_db, "on_windows": config.MOTOR_ON_WINDOWS,
@@ -163,6 +175,13 @@ class SawDetector:
     @classmethod
     def load(cls, path: str | Path) -> "SawDetector":
         return cls.from_dict(json.loads(Path(path).read_text()))
+
+
+def loud_windows() -> tuple[int, int, int]:
+    """(hold, baseline, smoothing) window counts for the 'too loud' rule."""
+    h = config.HOP_SECONDS
+    return (int(round(config.LOUD_RISE_HOLD_SECONDS / h)), int(round(config.LOUD_BASE_SECONDS / h)),
+            int(round(config.LOUD_SMOOTH_SECONDS / h)))
 
 
 def smooth(x: np.ndarray, k: int = config.SMOOTH_WINDOWS) -> np.ndarray:

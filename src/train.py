@@ -6,8 +6,8 @@ Plain language:
   1. Read the logbook, compute (or load cached) features for every recording.
   2. Learn the motor-on loudness threshold and label each window off/transition/running.
   3. Set the yellow/red lines honestly: each good cut is scored by a model that
-     never heard it ("leave one run out"), and the lines are the 99th / 99.9th
-     percentile of those scores.
+     never heard it ("leave one run out"), and the lines sit one robust spread above
+     the typical cut's 99th / 99.9th percentile of those scores.
   4. Learn the final model from ALL good cuts and save it for Python
      (models/saw.json) and for the phone page (web/model.json).
 """
@@ -115,9 +115,15 @@ def threshold_runs(p: Prepared) -> list[Run]:
     return [r for r in p.train_runs if counts[source_of(r)] >= 2]
 
 
-def _lines(scores: np.ndarray) -> tuple[float, float]:
-    yellow = float(np.percentile(scores, config.YELLOW_PERCENTILE))
-    red = max(float(np.percentile(scores, config.RED_PERCENTILE)), yellow * config.RED_MIN_RATIO)
+def _lines(per_cut: list[np.ndarray]) -> tuple[float, float]:
+    """Yellow = median of the cuts' own 99th percentiles plus LINE_SPREAD_SDS robust SDs of those percentiles
+    (so one odd cut, or a few very quiet ones, cannot move the line much); red = the same on the 99.9th
+    percentile, never under RED_MIN_RATIO x yellow."""
+    p_y = np.array([np.percentile(s, config.YELLOW_PERCENTILE) for s in per_cut])
+    p_r = np.array([np.percentile(s, config.RED_PERCENTILE) for s in per_cut])
+    spread = 1.4826 * float(np.median(np.abs(p_y - np.median(p_y)))) * config.LINE_SPREAD_SDS
+    yellow = float(np.median(p_y)) + spread
+    red = max(float(np.median(p_r)) + spread, yellow * config.RED_MIN_RATIO)
     return yellow, red
 
 
@@ -126,7 +132,7 @@ def thresholds_by_source(loo: dict[str, np.ndarray], p: Prepared) -> dict[str, t
     recordings do (phone position, device), so each source gets lines from its own honest scores;
     one shared pair would be too strict for the phone or too loose for the files."""
     eligible = threshold_runs(p)
-    return {src: _lines(np.concatenate([loo[r.filename] for r in eligible if source_of(r) == src]))
+    return {src: _lines([loo[r.filename] for r in eligible if source_of(r) == src])
             for src in dict.fromkeys(p.groups(eligible))}
 
 
@@ -138,7 +144,7 @@ def web_source(by_source: dict) -> str:
 def thresholds_from(loo: dict[str, np.ndarray], p: Prepared | None = None) -> tuple[float, float]:
     """The lines the phone page will use (the phone's own once there are >= 2 phone cuts, else the recordings')."""
     if p is None:
-        return _lines(np.concatenate(list(loo.values())))
+        return _lines(list(loo.values()))
     by = thresholds_by_source(loo, p)
     return by[web_source(by)]
 

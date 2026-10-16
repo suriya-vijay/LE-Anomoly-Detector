@@ -128,6 +128,7 @@ function onFeatures(f) {
   $("bt-fill").style.width = Math.round((r.progress || 0) * 100) + "%";
 
   setState(r.phase === RUNNING ? r.verdict : r.phase);
+  if (r.loud) $("hint").textContent = `Much louder than this cut's own first minute (${model.thresholds.loud_rise_db} dB up). Stop and check.`;
   $("score").textContent = r.score.toFixed(2);
   $("bar-fill").style.width = Math.min(100, (r.score / (det.red * 1.4)) * 100) + "%";
   $("clock").textContent = motorOnAt === null ? "" : "motor on " + fmt(t - motorOnAt);

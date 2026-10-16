@@ -38,7 +38,7 @@ def test_js_matches_python(tmp_path):
     py_feats = extract_all(windows, SR).astype(np.float64)
     py_scores = det.score(py_feats)
     py_phases = label_phases(py_feats, thr)
-    py_verdicts = det.verdicts(py_scores, py_phases)
+    py_verdicts = det.verdicts(py_scores, py_phases, py_feats[:, 0])
 
     out = subprocess.run([NODE, str(ROOT / "tests" / "parity_runner.mjs"), str(model_path),
                           str(tmp_path / "windows.bin"), str(windows.shape[1])],

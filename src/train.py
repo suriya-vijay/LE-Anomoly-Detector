@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from . import config
-from .breakthrough import BreakthroughModel, segments, fired_index, taken_back
+from .breakthrough import BreakthroughModel, segments, fired_index, heads_up_index, taken_back
 from .detector import SawDetector
 from .phases import RUNNING, fmt_time, label_phases, motor_on_threshold, on_off_times
 from .runlog import Run, features_for, load_runs, usable_mask
@@ -161,10 +161,41 @@ def fit_breakthrough(segs: dict[str, tuple[np.ndarray, np.ndarray]], skip: str |
     return BreakthroughModel().fit([u[0] for u in use], [u[1] for u in use])
 
 
-def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None, int]]:
-    """For each phone cut: (seconds after motor-on where a model that never saw it would say
-    'blade is through' and not take it back, or None; the user's own mark, or None; how many
-    guesses it showed and then took back)."""
+def scorecard(guesses: dict, p: Prepared) -> dict:
+    """Banner vs the user's tap, each cut judged unseen. Window: 15 s before to 5 s after the tap.
+    'false_early' = banner before 60% of the cut's running time had passed."""
+    tapped = within = late = missed = false_early = 0
+    for name, (banner, _heads, truth, _back) in guesses.items():
+        if truth is None:
+            continue
+        tapped += 1
+        if banner is None:
+            missed += 1
+            continue
+        lead = banner - truth
+        if -15 <= lead <= 5:
+            within += 1
+        elif lead > 5:
+            late += 1
+        run_s = float(np.sum(p.phases[name] != "off")) * config.HOP_SECONDS
+        if banner < 0.6 * run_s:
+            false_early += 1
+    return {"tapped": tapped, "within_window": within, "late": late, "missed": missed, "false_early": false_early,
+            "window_s": [-15, 5], "provisional": tapped < 20,
+            "pass": tapped >= 20 and within >= 0.8 * tapped and late == 0 and false_early == 0}
+
+
+def scorecard_text(sc: dict) -> str:
+    if not sc or not sc["tapped"]:
+        return "SCORECARD: no tapped cuts yet."
+    verdict = "provisional until 20 tapped cuts" if sc["provisional"] else ("PASS" if sc["pass"] else "FAIL")
+    return (f"SCORECARD (banner vs your tap, each cut judged unseen): {sc['within_window']} of {sc['tapped']} within 15 s "
+            f"before the tap, {sc['late']} late, {sc['missed']} missed, {sc['false_early']} false early. {verdict}.")
+
+
+def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None, float | None, int]]:
+    """For each phone cut, judged by a model that never saw it: (banner seconds after motor-on or None,
+    heads-up seconds or None, the user's own mark or None, how many heads-ups were taken back)."""
     phone = [r for r in p.train_runs if source_of(r) == "phone"]
     segs = breakthrough_segments(p, det, phone)
     out = {}
@@ -172,12 +203,14 @@ def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float
         m = fit_breakthrough(segs, skip=r.filename)
         if m is None:
             continue
-        Z = (p.feats[r.filename][:, det.distance_index] - det.mean) / det.std
+        F = p.feats[r.filename]
+        Z = (F[:, det.distance_index] - det.mean) / det.std
         ph = p.phases[r.filename]
-        _, events = m.track(m.load(Z), ph, p.feats[r.filename][:, 0])
-        fired = fired_index(events)
         on = int(np.flatnonzero(ph != "off")[0]) if np.any(ph != "off") else 0
-        out[r.filename] = (None if fired is None else (fired - on) * config.HOP_SECONDS, r.through_at_s, taken_back(events))
+        start = None if r.started_at_s is None else on + int(round(r.started_at_s / config.HOP_SECONDS))
+        _, events = m.track(m.load(Z), ph, F[:, 0], F[:, 2], start)
+        secs = lambda k: None if k is None else (k - on) * config.HOP_SECONDS
+        out[r.filename] = (secs(fired_index(events)), secs(heads_up_index(events)), r.through_at_s, taken_back(events))
     return out
 
 
@@ -198,6 +231,8 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
     det.trained_on = [r.filename for r in p.train_runs]
     phone = [r for r in p.train_runs if source_of(r) == "phone"]
     det.breakthrough = fit_breakthrough(breakthrough_segments(p, det, phone))
+    guesses = breakthrough_guesses(p, det) if det.breakthrough is not None else {}
+    det.scorecard = scorecard(guesses, p)
     det.save(MODEL_PATH, WEB_MODEL_PATH)
     if verbose:
         n = len(p.train_runs)
@@ -217,11 +252,13 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
         else:
             marked = sum(r.through_at_s is not None for r in phone)
             print(f"Blade-through indicator learned from {len(phone)} phone cuts ({marked} with a 'Blade is through' mark).")
-            for name, (guess, truth, back) in breakthrough_guesses(p, det).items():
+            for name, (guess, heads, truth, back) in guesses.items():
+                h = "never" if heads is None else fmt_time(heads)
                 g = "never" if guess is None else fmt_time(guess)
-                t = "" if truth is None else f"  (you marked {fmt_time(truth)}: {'%+.0f s' % (guess - truth) if guess is not None else 'missed'})"
-                b = f"  [{back} guess(es) shown then taken back]" if back else ""
-                print(f"  {name:28s} a model that never saw it says 'through' at {g}{t}{b}")
+                t = "" if truth is None else f"  (you marked {fmt_time(truth)}: banner {'%+.0f s' % (guess - truth) if guess is not None else 'missed'})"
+                b = f"  [{back} heads-up(s) taken back]" if back else ""
+                print(f"  {name:28s} unseen: heads-up {h}, banner {g}{t}{b}")
+            print(scorecard_text(det.scorecard))
         print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
     return det, p, loo
 

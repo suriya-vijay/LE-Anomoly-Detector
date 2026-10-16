@@ -55,42 +55,56 @@ class BreakthroughModel:
         """Raw per-window load number for standardised features Z (n_windows, n_features)."""
         return (Z - self.mid) @ self.w
 
-    def track(self, raw: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None) -> tuple[np.ndarray, list[list[int | None]]]:
-        """Causal state machine, identical to the phone. Returns (smoothed load, events), where
-        events is a list of [fired_index, taken_back_index or None], in order.
-        rms (raw rms_db per window) enables the 'got quieter' gate; without it the gate is off."""
+    def track(self, raw: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None,
+              centroid: np.ndarray | None = None, start_index: int | None = None) -> tuple[np.ndarray, list[list[int | None]]]:
+        """Causal state machine, identical to the phone. Returns (smoothed load, events); each event is
+        [heads_up_index, taken_back_index or None, banner_index or None].
+        Stage 1 (heads-up): load BT_DELTA above the cut's own low and, when rms is given, quieter than the
+        previous minute, held BT_HOLD_WINDOWS. Stage 2 (banner): stage 1 standing and still quieter (and brighter,
+        when BT_BRIGHT_PCT > 0 and centroid is given), held BT_STAGE2_HOLD_WINDOWS. start_index: the user's
+        'blade touched steel' mark; every history restarts there so the cut's own low is measured in the steel."""
         out = np.full(len(raw), np.nan)
-        hist: list[float] = []
-        rms_hist: list[float] = []
-        recent: list[float] = []
-        run = hold = 0
+        hist: list[float] = []; recent: list[float] = []; rms_hist: list[float] = []; cen_hist: list[float] = []
+        run = hold = hold2 = 0
         fired = False
         low_at_fire = 0.0
         events: list[list[int | None]] = []
+        ref_n = config.BT_SMOOTH_WINDOWS + config.BT_QUIET_REF_WINDOWS
         for i, (r, p) in enumerate(zip(raw, phases)):
-            if p != RUNNING:
-                hist, recent, rms_hist, run, hold, fired = [], [], [], 0, 0, False
-                continue
+            if p != RUNNING or i == start_index:
+                hist, recent, rms_hist, cen_hist, run, hold, hold2, fired = [], [], [], [], 0, 0, 0, False
+                if p != RUNNING:
+                    continue
             hist.append(float(r)); hist = hist[-config.BT_SMOOTH_WINDOWS:]
-            quiet = True
-            if rms is not None and config.BT_QUIET_DB > 0:
-                rms_hist.append(float(rms[i])); rms_hist = rms_hist[-(config.BT_SMOOTH_WINDOWS + config.BT_QUIET_REF_WINDOWS):]
-                ref = rms_hist[:-config.BT_SMOOTH_WINDOWS]
-                quiet = len(ref) >= config.BT_SMOOTH_WINDOWS and                     float(np.mean(rms_hist[-config.BT_SMOOTH_WINDOWS:])) < float(np.median(ref)) - config.BT_QUIET_DB
             sm = float(np.mean(hist)); out[i] = sm
+            quiet = bright = True
+            if rms is not None and config.BT_QUIET_DB > 0:
+                rms_hist.append(float(rms[i])); rms_hist = rms_hist[-ref_n:]
+                ref = rms_hist[:-config.BT_SMOOTH_WINDOWS]
+                quiet = len(ref) >= config.BT_SMOOTH_WINDOWS and \
+                    float(np.mean(rms_hist[-config.BT_SMOOTH_WINDOWS:])) < float(np.median(ref)) - config.BT_QUIET_DB
+            if centroid is not None and config.BT_BRIGHT_PCT > 0:
+                cen_hist.append(float(centroid[i])); cen_hist = cen_hist[-ref_n:]
+                ref = cen_hist[:-config.BT_SMOOTH_WINDOWS]
+                bright = len(ref) >= config.BT_SMOOTH_WINDOWS and \
+                    float(np.mean(cen_hist[-config.BT_SMOOTH_WINDOWS:])) > float(np.median(ref)) * (1 + config.BT_BRIGHT_PCT)
             run += 1
             recent.append(sm); recent = recent[-config.BT_LOOKBACK_WINDOWS:]
             low = float(np.percentile(recent, config.BT_LOW_PERCENTILE))
             if not fired:
                 hold = hold + 1 if (run >= config.BT_MIN_RUN_WINDOWS and sm > low + config.BT_DELTA and quiet) else 0
                 if hold >= config.BT_HOLD_WINDOWS:
-                    fired, low_at_fire, hold = True, low, 0
-                    events.append([i, None])
+                    fired, low_at_fire, hold, hold2 = True, low, 0, 0
+                    events.append([i, None, None])
             else:
                 hold = hold + 1 if sm < low_at_fire + config.BT_RETRACT_DELTA else 0
                 if hold >= config.BT_HOLD_WINDOWS:
-                    fired, hold = False, 0
+                    fired, hold, hold2 = False, 0, 0
                     events[-1][1] = i
+                elif events[-1][2] is None:
+                    hold2 = hold2 + 1 if (quiet and bright) else 0
+                    if hold2 >= config.BT_STAGE2_HOLD_WINDOWS:
+                        events[-1][2] = i
         return out, events
 
     # ----- saving -----
@@ -100,7 +114,8 @@ class BreakthroughModel:
                 "min_run_windows": config.BT_MIN_RUN_WINDOWS, "lookback_windows": config.BT_LOOKBACK_WINDOWS,
                 "low_percentile": config.BT_LOW_PERCENTILE, "delta": config.BT_DELTA,
                 "retract_delta": config.BT_RETRACT_DELTA, "quiet_db": config.BT_QUIET_DB,
-                "quiet_ref_windows": config.BT_QUIET_REF_WINDOWS}
+                "quiet_ref_windows": config.BT_QUIET_REF_WINDOWS, "stage2_hold_windows": config.BT_STAGE2_HOLD_WINDOWS,
+                "bright_pct": config.BT_BRIGHT_PCT, "progress_span": config.BT_PROGRESS_SPAN}
 
     @classmethod
     def from_dict(cls, d: dict) -> "BreakthroughModel":
@@ -108,14 +123,20 @@ class BreakthroughModel:
 
 
 def fired_index(events: list[list[int | None]]) -> int | None:
-    """The guess that stood at the end: the last fire that was not taken back, else None."""
-    standing = [f for f, back in events if back is None]
+    """The banner that stood at the end: stage 2 of the last heads-up that was not taken back, else None."""
+    standing = [e[2] for e in events if e[1] is None and e[2] is not None]
+    return standing[-1] if standing else None
+
+
+def heads_up_index(events: list[list[int | None]]) -> int | None:
+    """The heads-up (stage 1) that stood at the end, else None."""
+    standing = [e[0] for e in events if e[1] is None]
     return standing[-1] if standing else None
 
 
 def taken_back(events: list[list[int | None]]) -> int:
-    """How many guesses were taken back (false alarms the page would have shown briefly)."""
-    return sum(back is not None for _, back in events)
+    """How many heads-ups were taken back (false alarms the page would have shown briefly)."""
+    return sum(e[1] is not None for e in events)
 
 
 def segments(Z: np.ndarray, phases: np.ndarray, through_at_s: float | None = None) -> tuple[np.ndarray, np.ndarray] | None:

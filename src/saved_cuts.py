@@ -28,6 +28,7 @@ class SavedCut:
     saved_at: str
     duration_s: float
     through_at_s: float | None   # seconds after motor-on when the user tapped "Blade is through" (None if not tapped)
+    started_at_s: float | None   # seconds after motor-on when the user tapped "Blade touched steel" (None if not tapped)
     features: np.ndarray   # (n_windows, n_features)
 
 
@@ -54,7 +55,8 @@ def load_saved_cuts(root: str | Path, verbose: bool = False) -> list[SavedCut]:
                 name=f"{path.stem}#{i}", label=c.get("label", "unknown"), material=c.get("material", ""),
                 notes=c.get("notes", ""), saved_at=c.get("at", ""),
                 duration_s=float(c.get("duration_s", len(feats) * config.HOP_SECONDS)),
-                through_at_s=None if c.get("through_at_s") is None else float(c["through_at_s"]), features=feats))
+                through_at_s=None if c.get("through_at_s") is None else float(c["through_at_s"]),
+                started_at_s=None if c.get("started_at_s") is None else float(c["started_at_s"]), features=feats))
     if verbose:
         print(f"{len(cuts)} saved cut(s) from the phone in {folder}:")
         for c in cuts:

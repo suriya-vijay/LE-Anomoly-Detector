@@ -19,6 +19,7 @@ export class Detector {
     this.setSensitivity(sensitivity);
     this.iRms = model.feature_names.indexOf("rms_db");
     this.iPulse = model.feature_names.indexOf("pulse_depth");
+    this.iCentroid = model.feature_names.indexOf("centroid_hz");
     this.bt = model.breakthrough ? new Breakthrough(model.breakthrough) : null;
     this.reset();
   }
@@ -75,8 +76,10 @@ export class Detector {
       this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
       verdict = (score > this.red || this._oddStreak >= this.redAfterYellow) ? STOP : score > this.yellow ? ODD : GOOD;
     }
-    const bt = this.bt ? this.bt.push(this.standardise(f), phase, f[this.iRms]) : { load: null, through: false, retracted: false };
-    return { score, raw, phase, verdict, cutDone, load: bt.load, through: bt.through, retracted: bt.retracted };
+    const bt = this.bt ? this.bt.push(this.standardise(f), phase, f[this.iRms], f[this.iCentroid])
+      : { load: null, progress: 0, stage: 0, headsUp: false, through: false, retracted: false };
+    return { score, raw, phase, verdict, cutDone, load: bt.load, progress: bt.progress, stage: bt.stage,
+             headsUp: bt.headsUp, through: bt.through, retracted: bt.retracted };
   }
 
   /** Offline: score a whole recording's features (array of vectors) exactly like Python's evaluate. */
@@ -95,18 +98,19 @@ export class Detector {
       streak = scores[i] > this.yellow ? streak + 1 : 0;
       verdicts.push((scores[i] > this.red || streak >= this.redAfterYellow) ? STOP : scores[i] > this.yellow ? ODD : GOOD);
     }
-    let loads = null, through = null;
+    let loads = null, through = null, headsUp = null;
     if (this.bt) {
       const b = new Breakthrough(this.model.breakthrough);
-      loads = []; through = null;
+      loads = [];
       featureList.forEach((f, i) => {
-        const r = b.push(this.standardise(f), phases[i], f[this.iRms]);
+        const r = b.push(this.standardise(f), phases[i], f[this.iRms], f[this.iCentroid]);
         loads.push(r.load);
+        if (r.headsUp) { headsUp = i; through = null; }
         if (r.through) through = i;
-        if (r.retracted) through = null;
+        if (r.retracted) { through = null; headsUp = null; }
       });
     }
-    return { scores, phases, verdicts, loads, through };
+    return { scores, phases, verdicts, loads, through, headsUp };
   }
 }
 
@@ -116,41 +120,56 @@ export class Detector {
  *  stays above fire_level for hold_windows. Resets whenever the motor is not "running". */
 export class Breakthrough {
   constructor(d) { this.d = d; this.reset(); }
-  reset() { this.hist = []; this.recent = []; this.rms = []; this.run = 0; this.hold = 0; this.fired = false; this.lowAtFire = 0; }
-  /** Returns {load, through, retracted}: through is true on the window the guess fires,
-   *  retracted on the window it is taken back (load fell back toward the cut's own low). */
-  push(z, phase, rmsDb) {
+  reset() { this.hist = []; this.recent = []; this.rms = []; this.cen = []; this.run = 0; this.hold = 0; this.hold2 = 0; this.fired = false; this.banner = false; this.lowAtFire = 0; }
+  /** The user tapped "Blade touched steel": measure the cut's own low from here on. */
+  restart() { this.reset(); }
+  /** Returns {load, progress, stage, headsUp, through, retracted}. stage 0 = cutting, 1 = heads-up
+   *  (sound is changing), 2 = banner (coming through). headsUp / through / retracted are true only on
+   *  the window the state changes. */
+  push(z, phase, rmsDb, centroid) {
     const d = this.d;
-    if (phase !== RUNNING) { this.reset(); return { load: null, through: false, retracted: false }; }
+    if (phase !== RUNNING) { this.reset(); return { load: null, progress: 0, stage: 0, headsUp: false, through: false, retracted: false }; }
+    const refN = d.smooth_windows + d.quiet_ref_windows;
     // "got quieter" gate: the last 10 s must be quiet_db below the median of the 60 s before that
-    let quiet = true;
+    let quiet = true, bright = true;
     if (d.quiet_db > 0 && rmsDb !== undefined) {
-      this.rms.push(rmsDb);
-      if (this.rms.length > d.smooth_windows + d.quiet_ref_windows) this.rms.shift();
+      this.rms.push(rmsDb); if (this.rms.length > refN) this.rms.shift();
       const ref = this.rms.slice(0, Math.max(0, this.rms.length - d.smooth_windows));
-      const cur = this.rms.slice(-d.smooth_windows);
-      quiet = ref.length >= d.smooth_windows && cur.reduce((a, b) => a + b, 0) / cur.length < median(ref) - d.quiet_db;
+      quiet = ref.length >= d.smooth_windows && mean(this.rms.slice(-d.smooth_windows)) < median(ref) - d.quiet_db;
+    }
+    if (d.bright_pct > 0 && centroid !== undefined) {
+      this.cen.push(centroid); if (this.cen.length > refN) this.cen.shift();
+      const ref = this.cen.slice(0, Math.max(0, this.cen.length - d.smooth_windows));
+      bright = ref.length >= d.smooth_windows && mean(this.cen.slice(-d.smooth_windows)) > median(ref) * (1 + d.bright_pct);
     }
     let raw = 0;
     for (let j = 0; j < d.w.length; j++) raw += d.w[j] * (z[j] - d.mid[j]);
     this.hist.push(raw);
     if (this.hist.length > d.smooth_windows) this.hist.shift();
-    const load = this.hist.reduce((a, b) => a + b, 0) / this.hist.length;
+    const load = mean(this.hist);
     this.run++;
     this.recent.push(load);
     if (this.recent.length > d.lookback_windows) this.recent.shift();
     const low = percentile(this.recent, d.low_percentile);
-    let through = false, retracted = false;
+    let headsUp = false, through = false, retracted = false;
     if (!this.fired) {
       this.hold = (this.run >= d.min_run_windows && load > low + d.delta && quiet) ? this.hold + 1 : 0;
-      if (this.hold >= d.hold_windows) { this.fired = true; this.lowAtFire = low; this.hold = 0; through = true; }
+      if (this.hold >= d.hold_windows) { this.fired = true; this.lowAtFire = low; this.hold = 0; this.hold2 = 0; this.banner = false; headsUp = true; }
     } else {
       this.hold = load < this.lowAtFire + d.retract_delta ? this.hold + 1 : 0;
-      if (this.hold >= d.hold_windows) { this.fired = false; this.hold = 0; retracted = true; }
+      if (this.hold >= d.hold_windows) { this.fired = false; this.hold = 0; this.hold2 = 0; this.banner = false; retracted = true; }
+      else if (!this.banner) {
+        this.hold2 = (quiet && bright) ? this.hold2 + 1 : 0;
+        if (this.hold2 >= d.stage2_hold_windows) { this.banner = true; through = true; }
+      }
     }
-    return { load, through, retracted };
+    const progress = this.run >= d.min_run_windows ? Math.max(0, Math.min(1, (load - low) / d.progress_span)) : 0;
+    const stage = this.fired ? (this.banner ? 2 : 1) : 0;
+    return { load, progress, stage, headsUp, through, retracted };
   }
 }
+
+function mean(values) { return values.reduce((a, b) => a + b, 0) / values.length; }
 
 /** numpy.median */
 function median(values) { return percentile(values, 50); }

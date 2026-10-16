@@ -25,6 +25,7 @@ let live = [];                             // recent {t, score, verdict} for the
 let t0 = 0, motorOnAt = null;
 let throughAt = null;                      // window index (since motor on) where the user tapped "Blade is through"
 let throughGuess = null;                   // window index where the page's own indicator fired
+let steelAt = null;                        // window index (since motor on) where the user tapped "Blade touched steel"
 let pendingIndex = null;
 let bannerTimer = null;                    // hides the "I take that back" banner after a few seconds                   // position (in the saved list) of the cut waiting for its GOOD/ODD answer
 
@@ -43,7 +44,7 @@ async function refreshModel() {
   placeMarks();
   $("model-info").textContent = `Page ${APP_VERSION}. Numbers calculated from ${model.trained_on.length} good cut(s) on ${model.trained_at.slice(0, 10)}. ` +
     `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.` +
-    (model.breakthrough ? " Blade-through indicator: on." : " Blade-through indicator: not learned yet.");
+    (model.breakthrough ? " Blade-through indicator: on." : " Blade-through indicator: not learned yet.") + (model.scorecard && model.scorecard.tapped ? ` Banner check: ${model.scorecard.within_window} of ${model.scorecard.tapped} tapped cuts within 15 s.` : "");
   return true;
 }
 
@@ -66,7 +67,7 @@ async function start() {
   $("mic-error").hidden = true;
   try {
     if (await refreshModel()) $("phase").textContent = "Picked up a newer model.";
-    det.reset(); live = []; currentCut = null; motorOnAt = null; throughAt = null; throughGuess = null; t0 = performance.now();
+    det.reset(); live = []; currentCut = null; motorOnAt = null; throughAt = null; throughGuess = null; steelAt = null; t0 = performance.now();
     windower = new Windower(fx.windowLength, fx.hopLength, onWindow);
     mic = new MicCapture(model.audio.sr, (s) => windower.push(s));
     const info = await mic.start();
@@ -99,7 +100,7 @@ function onFeatures(f) {
   const r = det.push(f);
   const t = (performance.now() - t0) / 1000;
   if (r.phase !== OFF && motorOnAt === null) {                                       // motor just started
-    motorOnAt = t; currentCut = []; throughAt = null; throughGuess = null; showThrough(true); $("through-banner").hidden = true;
+    motorOnAt = t; currentCut = []; throughAt = null; throughGuess = null; steelAt = null; showThrough(true); $("through-banner").hidden = true; $("bt-text").textContent = "";
   }
   if (currentCut) {
     currentCut.push(Array.from(f, (v) => Math.round(v * 1000) / 1000));
@@ -109,17 +110,22 @@ function onFeatures(f) {
     if (r.cutDone) finishCut(); else { currentCut = null; clearDraft(); }            // too short to be a cut
     motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
-  if (r.through && currentCut) {                                                     // the page's own guess
+  if (r.headsUp && currentCut) {                                                     // stage 1: heads-up, no banner
+    $("bt-text").textContent = `Sound is changing (${fmt(currentCut.length * model.audio.hop_s)}): blade may be getting close.`;
+  }
+  if (r.through && currentCut) {                                                     // stage 2: the page's own guess
     throughGuess = currentCut.length;
-    $("through-banner").textContent = `Sounds like the blade is starting to come through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it come free.`;
+    $("through-banner").textContent = `Sounds like the blade is coming through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it come free.`;
     $("through-banner").hidden = false; clearTimeout(bannerTimer);
+    if ($("vibrate").checked && navigator.vibrate) navigator.vibrate([200, 100, 200]);
   }
   if (r.retracted && currentCut) {                                                   // ... taken back
-    throughGuess = null;
+    throughGuess = null; $("bt-text").textContent = "";
     $("through-banner").textContent = "Never mind, it still sounds like cutting. I take that guess back.";
     clearTimeout(bannerTimer); bannerTimer = setTimeout(() => ($("through-banner").hidden = true), 8000);
   }
   $("load").textContent = r.load === null ? "" : `blade load ${r.load.toFixed(1)}`;
+  $("bt-fill").style.width = Math.round((r.progress || 0) * 100) + "%";
 
   setState(r.phase === RUNNING ? r.verdict : r.phase);
   $("score").textContent = r.score.toFixed(2);
@@ -134,7 +140,17 @@ function onFeatures(f) {
 /** The "Blade is through" marker: shown while the motor runs; a tap stamps the time into the cut. */
 function showThrough(visible) {
   $("through-row").hidden = !visible;
-  if (visible) $("through-note").textContent = "Tap the moment you hear the blade come through the last of the steel.";
+  if (visible) {
+    $("through-note").textContent = "Tap 'touched steel' when the blade starts cutting, and 'through' the moment you hear it come free.";
+    $("started").disabled = false;
+  }
+}
+/** The "Blade touched steel" marker: the page's own low is measured from here on. */
+function markStarted() {
+  if (!currentCut) return;
+  steelAt = currentCut.length;
+  if (det.bt) det.bt.restart();
+  $("bt-text").textContent = `Touched steel at ${fmt(steelAt * model.audio.hop_s)}.`;
 }
 function markThrough() {
   if (!currentCut) return;
@@ -148,13 +164,14 @@ function finishCut(startedAt = null, recovered = false) {
   if (!currentCut || currentCut.length < 20) { currentCut = null; clearDraft(); return; }
   const cut = { label: UNLABELLED, material: localStorage.getItem(MATERIAL_KEY) || "", notes: "",
     at: startedAt || new Date().toISOString(), duration_s: Math.round(currentCut.length * model.audio.hop_s),
+    started_at_s: steelAt === null ? null : Math.round(steelAt * model.audio.hop_s * 10) / 10,
     through_at_s: throughAt === null ? null : Math.round(throughAt * model.audio.hop_s * 10) / 10,
     through_guess_s: throughGuess === null ? null : Math.round(throughGuess * model.audio.hop_s * 10) / 10,
     sensitivity: det.sensitivity, model_trained_at: model.trained_at, feature_names: model.feature_names, features: currentCut };
   const cuts = loadSaved(); cuts.push(cut);
   if (persist(cuts)) pendingIndex = cuts.length - 1;
   else { pendingIndex = null; downloadCuts([cut], "cut"); alert("Phone storage is full, so this cut was downloaded as a file instead of saved on the phone. Download the saved cuts, then Clear, before the next cut."); }
-  currentCut = null; throughAt = null; throughGuess = null; clearDraft(); updateSavedCount();
+  currentCut = null; throughAt = null; throughGuess = null; steelAt = null; clearDraft(); updateSavedCount();
   if (!recovered) { const banner = $("cut-banner"); banner.hidden = false; setTimeout(() => (banner.hidden = true), 10000); }
   if (pendingIndex !== null) openLabelPanel(pendingIndex, recovered ? "Recovered a cut that was never labelled. It is saved. How was it?" : "");
 }
@@ -172,7 +189,7 @@ function openLabelPanel(i, note = "") {
 
 function persist(cuts) { try { localStorage.setItem(SAVED_KEY, JSON.stringify(cuts)); return true; } catch { return false; } }
 function saveDraft() {
-  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: new Date().toISOString(), throughAt, throughGuess, features: currentCut })); } catch {}
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: new Date().toISOString(), throughAt, throughGuess, steelAt, features: currentCut })); } catch {}
 }
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch {} }
 /** After a reload or a crash: a draft of at least one minimum cut becomes a saved, unlabelled cut. */
@@ -180,7 +197,7 @@ function recoverDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch {}
   if (!d || !Array.isArray(d.features) || d.features.length < det.motor.minCutWindows) { clearDraft(); return; }
-  currentCut = d.features; throughAt = d.throughAt ?? null; throughGuess = d.throughGuess ?? null;
+  currentCut = d.features; throughAt = d.throughAt ?? null; throughGuess = d.throughGuess ?? null; steelAt = d.steelAt ?? null;
   finishCut(d.at, true);
 }
 
@@ -227,6 +244,7 @@ function updateSavedCount() {
     const idx = cuts.length - 1 - i;
     li.innerHTML = `<span class="tag tag-${c.label}">${c.label === "normal" ? "GOOD" : c.label === "abnormal" ? "ODD" : "NOT LABELLED"}</span>` +
       `<span><b>${esc(c.material) || "(no material)"}</b> <span class="meta">${when}, ${fmt(c.duration_s || 0)}` +
+      (c.started_at_s != null ? `, touched steel at ${fmt(c.started_at_s)}` : "") +
       (c.through_at_s != null ? `, blade through at ${fmt(c.through_at_s)}` : "") +
       (c.through_guess_s != null ? ` (page guessed ${fmt(c.through_guess_s)})` : "") + `</span>` +
       (c.notes ? `<br><span class="meta">${esc(c.notes)}</span>` : "") +
@@ -320,6 +338,7 @@ $("cut-good").onclick = () => saveCut("normal");
 $("cut-odd").onclick = () => saveCut("abnormal");
 $("cut-skip").onclick = deletePending;
 $("through").onclick = markThrough;
+$("started").onclick = markStarted;
 $("download").onclick = downloadSaved;
 $("clear-saved").onclick = () => { if (confirm("Delete ALL saved cuts on this phone? Download them first if you have not.")) { localStorage.removeItem(SAVED_KEY); pendingIndex = null; $("after-cut").hidden = true; updateSavedCount(); } };
 $("file").onchange = (e) => e.target.files[0] && testFile(e.target.files[0]);

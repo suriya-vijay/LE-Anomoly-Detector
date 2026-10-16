@@ -50,4 +50,8 @@ BT_HOLD_WINDOWS = 30        # ... for 15 s in a row (was 10 s)
 BT_RETRACT_DELTA = 0.5      # the guess is taken back if the load falls under low + this for 10 s
 BT_QUIET_DB = 0.5           # ... and the sound must also be this much quieter (10 s mean of rms_db) than ...
 BT_QUIET_REF_WINDOWS = 120  # ... its median over the 60 s before that (cut 15: load crept up for 2 min with no through)
+BT_STAGE2_HOLD_WINDOWS = 10  # banner ("coming through"): the heads-up must stand AND stay quieter for 5 s more
+BT_BRIGHT_PCT = 0.0         # optional banner gate: 10 s brightness this fraction above the previous minute (0 = off;
+                            # 3% fixed cut 15 but lost cuts 12 and 14 on 2026-10-15, 2% changed nothing)
+BT_PROGRESS_SPAN = 1.5      # the page's progress bar is full when the load is this far above the cut's own low
 BT_TAIL_WINDOWS = 30        # without a user mark: the last 15 s before motor-off count as "through"

@@ -18,5 +18,5 @@ const fx = new FeatureExtractor(model);
 const det = new Detector(model);
 const features = [];
 for (let i = 0; i + n <= all.length; i += n) features.push(Array.from(fx.extract(all.subarray(i, i + n))));
-const { scores, phases, verdicts, loads, through } = det.scoreAll(features);
-process.stdout.write(JSON.stringify({ features, scores, phases, verdicts, loads, through }));
+const { scores, phases, verdicts, loads, through, headsUp } = det.scoreAll(features);
+process.stdout.write(JSON.stringify({ features, scores, phases, verdicts, loads, through, headsUp }));

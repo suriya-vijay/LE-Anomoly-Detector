@@ -132,6 +132,7 @@ class SawDetector:
                       "spindown_windows": config.SPINDOWN_WINDOWS, "min_cut_s": config.MIN_CUT_S},
             "mel": sparse,
             "breakthrough": self.breakthrough.to_dict() if self.breakthrough is not None else None,
+            "scorecard": getattr(self, "scorecard", None),
         }
 
     @classmethod

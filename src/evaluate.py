@@ -19,6 +19,7 @@ from . import config
 from .detector import GOOD, ODD, STOP, SawDetector
 from .phases import OFF, RUNNING, fmt_time
 from .train import (ROOT, breakthrough_guesses, leave_one_out_models, leave_one_out_scores, source_of, threshold_runs,
+from .train import scorecard, scorecard_text
                     thresholds_by_source, train, web_source)
 
 REPORT_PATH = ROOT / "reports" / "weirdness.png"
@@ -122,12 +123,14 @@ def _print_breakthrough(p, det) -> None:
     if not guesses:
         return
     print("\nBLADE-THROUGH INDICATOR (each phone cut judged by a model that never saw it)")
-    for name, (guess, truth, back) in guesses.items():
-        g = "never fired" if guess is None else f"fired at {fmt_time(guess)} after motor-on"
-        t = ("  <- you marked " + fmt_time(truth) + (f", so the guess was {guess - truth:+.0f} s" if guess is not None else ", so it missed")) \
+    for name, (guess, heads, truth, back) in guesses.items():
+        h = "no heads-up" if heads is None else f"heads-up at {fmt_time(heads)}"
+        g = "banner never shown" if guess is None else f"banner at {fmt_time(guess)} after motor-on"
+        t = ("  <- you marked " + fmt_time(truth) + (f", so the banner was {guess - truth:+.0f} s" if guess is not None else ", so it missed")) \
             if truth is not None else "  (no mark from you to check against)"
-        b = f"  [{back} earlier guess(es) shown and taken back]" if back else ""
-        print(f"- {name}: {g}{t}{b}")
+        b = f"  [{back} heads-up(s) taken back]" if back else ""
+        print(f"- {name}: {h}, {g}{t}{b}")
+    print(scorecard_text(scorecard(guesses, p)))
 
 
 def _plot(rows: list[dict], path: Path) -> None:

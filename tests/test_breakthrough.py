@@ -3,7 +3,7 @@ sound, so a phone that sits somewhere else (every number shifted) still works; t
 import numpy as np
 
 from src import config
-from src.breakthrough import BreakthroughModel, fired_index, segments, taken_back
+from src.breakthrough import BreakthroughModel, fired_index, heads_up_index, segments, taken_back
 from src.phases import OFF, RUNNING, TRANSITION
 
 RNG = np.random.default_rng(7)
@@ -37,7 +37,7 @@ def test_fires_after_the_cut_not_during_idle():
     load, events = m.track(m.load(Z), ph)
     fired = fired_index(events)
     assert fired is not None and taken_back(events) == 0
-    assert true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
+    assert true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_STAGE2_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
     assert np.nanmean(load[100:400]) + 1.0 < np.nanmean(load[true_through + 30:])   # lower in the steel than through
     assert np.isnan(load[0]) and np.isnan(load[-1])                                # transition windows are not judged
 
@@ -50,7 +50,7 @@ def test_shifted_phone_still_fires():
     _, events = m.track(m.load(Z), ph)
     fired = fired_index(events)
     assert fired is not None and taken_back(events) == 0
-    assert true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
+    assert true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_STAGE2_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
 
 
 def test_no_fire_without_a_cut():
@@ -65,11 +65,11 @@ def test_wobble_is_taken_back_then_real_through_fires():
     Z, ph, true_through = fake_cut(bump_at=250)
     _, events = m.track(m.load(Z), ph)
     assert taken_back(events) == 1                                     # the wobble fired and was withdrawn
-    bump_fire, bump_back = events[0]
+    bump_fire, bump_back, _ = events[0]
     assert 60 + 250 <= bump_fire <= 60 + 280 + config.BT_HOLD_WINDOWS
     assert bump_back is not None and bump_back <= 60 + 280 + 2 * config.BT_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
     fired = fired_index(events)
-    assert fired is not None and true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
+    assert fired is not None and true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_STAGE2_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS
 
 
 def test_user_mark_overrides_weak_labels():
@@ -87,3 +87,30 @@ def test_round_trip():
     back = BreakthroughModel.from_dict(m.to_dict())
     np.testing.assert_allclose(back.load(Z), m.load(Z), rtol=1e-6, atol=1e-6)
     assert back.track(back.load(Z), ph)[1] == m.track(m.load(Z), ph)[1]
+
+
+def test_heads_up_comes_before_the_banner():
+    m = trained()
+    Z, ph, true_through = fake_cut()
+    _, events = m.track(m.load(Z), ph)
+    heads, banner = heads_up_index(events), fired_index(events)
+    assert heads is not None and banner is not None
+    assert banner - heads == config.BT_STAGE2_HOLD_WINDOWS                 # gate off (no rms): banner follows the heads-up by its hold
+
+
+def test_quiet_gate_blocks_until_the_sound_drops():
+    m = trained()
+    Z, ph, true_through = fake_cut()
+    flat = np.full(len(Z), -20.0)                                          # loudness never changes: nothing may fire
+    assert m.track(m.load(Z), ph, rms=flat)[1] == []
+    drop = flat.copy(); drop[true_through:] -= 2.0                         # 2 dB quieter once through: heads-up and banner
+    _, events = m.track(m.load(Z), ph, rms=drop)
+    assert fired_index(events) is not None and fired_index(events) >= true_through
+
+
+def test_start_mark_restarts_the_history_without_breaking_the_cut():
+    m = trained()
+    Z, ph, true_through = fake_cut()
+    _, events = m.track(m.load(Z), ph, start_index=70)                     # tapped "touched steel" 5 s into the steel
+    fired = fired_index(events)
+    assert fired is not None and true_through <= fired <= true_through + config.BT_HOLD_WINDOWS + config.BT_STAGE2_HOLD_WINDOWS + config.BT_SMOOTH_WINDOWS

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from src.audio_io import split_windows
-from src.breakthrough import BreakthroughModel, fired_index
+from src.breakthrough import BreakthroughModel, fired_index, heads_up_index
 from src.detector import SawDetector
 from src.features import extract_all
 from src.phases import label_phases, motor_on_threshold
@@ -53,8 +53,9 @@ def test_js_matches_python(tmp_path):
     assert js["phases"] == list(py_phases)
     assert js["verdicts"] == list(py_verdicts)
     Z = (py_feats[:, det.distance_index] - det.mean) / det.std
-    py_load, py_events = bt.track(bt.load(Z), py_phases, py_feats[:, 0])
+    py_load, py_events = bt.track(bt.load(Z), py_phases, py_feats[:, 0], py_feats[:, 2])
     py_fire = fired_index(py_events)
     js_load = np.array([np.nan if v is None else v for v in js["loads"]], dtype=float)
     np.testing.assert_allclose(js_load, py_load, rtol=1e-3, atol=2e-3, equal_nan=True)
     assert js["through"] == py_fire
+    assert js["headsUp"] == heads_up_index(py_events)

@@ -204,8 +204,11 @@ def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float
     heads-up seconds or None, the user's own mark or None, how many heads-ups were taken back)."""
     phone = [r for r in p.train_runs if source_of(r) == "phone"]
     segs = breakthrough_segments(p, det, phone)
+    # ODD cuts never train the meter, but a 'Blade is through' tap on one is still a fair test of the banner
+    # (the through model never saw them, so no skip is needed)
+    odd_tapped = [r for r in p.runs if source_of(r) == "phone" and r not in p.train_runs and r.through_at_s is not None]
     out = {}
-    for r in phone:
+    for r in phone + odd_tapped:
         m = fit_breakthrough(segs, skip=r.filename)
         if m is None:
             continue

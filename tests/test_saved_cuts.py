@@ -24,12 +24,13 @@ def test_saved_cuts_become_runs(tmp_path):
     (tmp_path / "data" / "normal").mkdir(); (tmp_path / "data" / "abnormal").mkdir(); (tmp_path / "data" / "test").mkdir()
     (tmp_path / "data" / "runs.csv").write_text("filename,label\n")
     cuts = [_phone_file("normal", 50), _phone_file("abnormal", 51, "thump"),
-            {**_phone_file("normal", 52), "feature_names": ["old", "version"]}]   # must be skipped
+            {**_phone_file("normal", 52), "feature_names": ["old", "version"]},   # must be skipped
+            {**_phone_file("normal", 53), "train": False}]                        # good, but kept out of learning
     (tmp_path / "data" / "saved_cuts" / "saved-cuts-2026-10-13.json").write_text(json.dumps({"cuts": cuts}))
 
     runs = load_runs(tmp_path)
-    assert [r.label for r in runs] == ["normal", "abnormal"]
-    assert runs[0].train and not runs[1].train
+    assert [r.label for r in runs] == ["normal", "abnormal", "normal"]
+    assert runs[0].train and not runs[1].train and not runs[2].train
     assert runs[0].filename == "saved-cuts-2026-10-13#0" and "synthetic steel" in runs[0].notes
     feats, times = features_for(runs[0], tmp_path)
     assert feats.shape[1] == len(feature_names()) and len(times) == len(feats)

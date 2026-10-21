@@ -3,22 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#222">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="description" content="Listens to a cut-off saw and warns when the cut sounds wrong or the blade is coming through.">
   <title>Saw Sound Meter</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
-<body data-state="idle">
+<body data-state="idle" data-mode="operator">
 
-  <main id="meter" class="meter">
+  <header class="topbar">
+    <div class="brand">
+      <img src="icon.svg" alt="" width="26" height="26">
+      <span>Saw Sound Meter</span>
+    </div>
+    <div class="topbar-right">
+      <span id="mode-chip" class="chip chip-mode" hidden>Data collection</span>
+      <span id="version" class="chip"></span>
+    </div>
+  </header>
+
+  <!-- live status -->
+  <main id="meter" class="meter card">
     <div class="meter-top">
       <span id="phase" class="phase">Not listening</span>
-      <span><span id="clock" class="clock"></span> <span id="version" class="version"></span></span>
+      <span id="clock" class="clock"></span>
     </div>
     <div id="verdict" class="verdict">READY</div>
-    <div id="hint" class="hint">Tap Start, then put the phone on the saw at the tape mark.</div>
+    <div id="hint" class="hint">Tap Start, then lay the phone on the saw at the tape mark.</div>
 
     <div class="bar-wrap" aria-label="weirdness meter">
       <div class="bar">
@@ -26,74 +39,94 @@
         <div id="mark-yellow" class="mark mark-yellow"></div>
         <div id="mark-red" class="mark mark-red"></div>
       </div>
-      <div class="bar-labels"><span>normal</span><span id="score">–</span><span>weird</span></div>
+      <div class="bar-labels"><span>normal</span><span id="score">–</span><span>unusual</span></div>
     </div>
+    <canvas id="timeline" class="timeline" height="80" aria-label="last 90 seconds"></canvas>
+  </main>
 
-    <canvas id="timeline" class="timeline" height="90"></canvas>
-    <div id="cut-banner" class="cut-banner" hidden>Cut finished</div>
-    <div id="through-banner" class="cut-banner through-banner" hidden></div>
-    <div id="load" class="small load"></div>
-    <div class="bt-wrap" aria-label="blade through progress">
-      <div class="bar bt-bar"><div id="bt-fill" class="bar-fill bt-fill"></div></div>
-      <div id="bt-text" class="small bt-text"></div>
+  <div class="actions">
+    <button id="start" class="btn btn-primary btn-big">Start listening</button>
+    <button id="stop" class="btn btn-big" hidden>Stop</button>
+  </div>
+  <div id="mic-error" class="error" hidden></div>
+
+  <!-- blade progress -->
+  <section class="card progress-card" aria-label="blade through progress">
+    <div class="card-head">
+      <h2>Cut progress</h2>
+      <span id="load" class="small load"></span>
     </div>
-    <div id="through-row" class="row through-row" hidden>
+    <div class="bar bt-bar"><div id="bt-fill" class="bar-fill bt-fill"></div></div>
+    <div id="bt-text" class="small bt-text">The bar fills as the sound changes near the end of the cut.</div>
+    <div id="through-banner" class="banner banner-through" hidden></div>
+    <div id="cut-banner" class="banner" hidden>Cut finished and saved</div>
+
+    <!-- data-collection only -->
+    <div id="through-row" class="row through-row collect-only" hidden>
       <button id="started" class="btn btn-started">Blade touched steel</button>
       <button id="through" class="btn btn-through">Blade is through</button>
       <span id="through-note" class="small">Tap the moment you hear the blade come through the last of the steel.</span>
     </div>
-  </main>
+  </section>
 
-  <section id="after-cut" class="panel" hidden>
+  <!-- data-collection only: label the cut that just finished -->
+  <section id="after-cut" class="card collect-only" hidden>
     <h2>How was that cut?</h2>
     <p class="small" id="after-cut-note">This cut is already saved on the phone. Pick GOOD or ODD to label it.</p>
-    <p class="small">Only sound measurements are kept, no audio. You can label a cut later from the Saved cuts list.</p>
     <label class="field"><span>Sample / material</span>
-      <input id="cut-material" type="text" list="material-list" placeholder="e.g. Ultracore 81 Ni1M-H Plus on nickel alloy steel" autocomplete="off">
+      <input id="cut-material" type="text" list="material-list" placeholder="e.g. scrap steel" autocomplete="off">
       <datalist id="material-list"></datalist>
     </label>
-    <label class="field"><span>Notes (how the cut went, blade, feed, anything unusual)</span>
-      <textarea id="cut-notes" rows="2" placeholder="e.g. steady cut, coolant on, slight squeal near the end"></textarea>
+    <label class="field"><span>Notes (piece size, air blasts, anything unusual)</span>
+      <textarea id="cut-notes" rows="2" placeholder="e.g. big piece, air blast at 2:00"></textarea>
     </label>
     <div class="row">
-      <button id="cut-good" class="btn btn-good">That cut was GOOD</button>
-      <button id="cut-odd" class="btn btn-odd">That cut was ODD</button>
+      <button id="cut-good" class="btn btn-good">GOOD cut</button>
+      <button id="cut-odd" class="btn btn-odd">ODD cut</button>
     </div>
     <p class="small"><button id="cut-skip" class="link">Delete this cut</button> (asks first)</p>
   </section>
 
-  <section class="panel controls">
-    <div class="row">
-      <button id="start" class="btn btn-primary">Start listening</button>
-      <button id="stop" class="btn" hidden>Stop</button>
-    </div>
+  <details class="card fold">
+    <summary><h2>Saved cuts <span id="saved-count" class="count">0</span></h2></summary>
+    <p class="small">Every cut is saved on this phone automatically (sound measurements only, never audio).
+      <button id="download" class="link">Download as a file</button> ·
+      <button id="clear-saved" class="link">Clear</button></p>
+    <ul id="saved-list" class="saved-list"></ul>
+  </details>
+
+  <details class="card fold">
+    <summary><h2>Settings</h2></summary>
     <label class="field">
       <span>Sensitivity <output id="sens-out">1.0×</output></span>
       <input id="sensitivity" type="range" min="0.7" max="1.5" step="0.05" value="1">
-      <span class="small">Higher = stricter (more alerts). Reset: <button id="sens-reset" class="link">1.0×</button></span>
+      <span class="small">Higher = stricter (more alerts). <button id="sens-reset" class="link">Reset to 1.0×</button></span>
     </label>
-    <div class="row toggles">
-      <label><input id="vibrate" type="checkbox" checked> Vibrate on STOP <span class="small" id="vibrate-note"></span></label>
-      <label><input id="beep" type="checkbox"> Beep on STOP</label>
+    <div class="toggles">
+      <label class="switch"><input id="vibrate" type="checkbox" checked><span>Vibrate on STOP and on "coming through" <span class="small" id="vibrate-note"></span></span></label>
+      <label class="switch"><input id="beep" type="checkbox"><span>Beep on STOP</span></label>
+      <label class="switch"><input id="collect" type="checkbox"><span>Data collection mode
+        <span class="small">Shows the "touched steel" / "through" buttons and asks GOOD or ODD after each cut. Only needed when collecting training data.</span></span></label>
     </div>
-    <div id="mic-error" class="error" hidden></div>
-  </section>
+  </details>
 
-  <section class="panel">
-    <h2>Saved cuts</h2>
-    <p class="small"><span id="saved-count">0</span> saved on this phone.
-      <button id="download" class="link">Download as a file</button> and drop it into the project folder to retrain.
-      <button id="clear-saved" class="link">Clear</button></p>
-    <ul id="saved-list" class="saved-list"></ul>
-  </section>
-
-  <section class="panel">
-    <h2>Test with a recording</h2>
-    <p class="small">Pick a recording (.m4a or .wav) and the meter will run through it faster than real time, exactly as it would have live.</p>
+  <details class="card fold">
+    <summary><h2>Test with a recording</h2></summary>
+    <p class="small">Pick a recording (.m4a, .wav or .mp3). The meter runs through it faster than real time, exactly as it would have live.</p>
     <input id="file" type="file" accept="audio/*,.m4a,.wav,.mp3">
     <div id="file-result" class="small"></div>
     <canvas id="file-timeline" class="timeline" height="110" hidden></canvas>
-  </section>
+  </details>
+
+  <details class="card fold">
+    <summary><h2>How it works</h2></summary>
+    <div class="about">
+      <p>The phone measures the saw's sound 2 times a second (70 numbers each time: loudness, pitch, brightness, rhythm and a 64-band frequency picture). Nothing is recorded or uploaded.</p>
+      <p><b>GOOD / ODD / STOP</b> compares each measurement with what good cuts on this saw sounded like. It learned only from good cuts, so it flags anything far from normal, including faults it has never seen.</p>
+      <p><b>Cut progress</b> watches for the change in sound as the blade comes through the steel: a little quieter and brighter. "Coming through" shows once the change holds for 20 seconds.</p>
+      <p id="accuracy" class="accuracy"></p>
+    </div>
+  </details>
 
   <footer class="small" id="model-info">Loading model…</footer>
 

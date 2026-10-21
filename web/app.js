@@ -7,7 +7,7 @@ import { APP_VERSION } from "./version.js";
 const $ = (id) => document.getElementById(id);
 const COLOURS = { [OFF]: "#9e9e9e", [TRANSITION]: "#9e9e9e", [GOOD]: "#1e8e3e", [ODD]: "#f1b000", [STOP]: "#ff5252" };
 const TEXT = {
-  idle: ["READY", "Tap Start, then put the phone on the saw at the tape mark."],
+  idle: ["READY", "Tap Start, then lay the phone on the saw at the tape mark."],
   [OFF]: ["WAITING", "Motor off. Not judging."],
   [TRANSITION]: ["STARTING", "Motor just started. Judging in a few seconds."],
   [GOOD]: ["GOOD", "Cut sounds normal."],
@@ -15,6 +15,7 @@ const TEXT = {
   [STOP]: ["STOP", "Sound is far from normal. Stop and check."],
 };
 const SAVED_KEY = "sawmeter.savedCuts", SENS_KEY = "sawmeter.sensitivity", MATERIAL_KEY = "sawmeter.lastMaterial";
+const MODE_KEY = "sawmeter.collect";     // "1" = data collection mode (tap buttons + GOOD/ODD questions)
 const DRAFT_KEY = "sawmeter.draft";        // the cut in progress, written every 5 s so a reload cannot lose it
 const UNLABELLED = "unlabelled";
 
@@ -27,7 +28,7 @@ let throughAt = null;                      // window index (since motor on) wher
 let throughGuess = null;                   // window index where the page's own indicator fired
 let steelAt = null;                        // window index (since motor on) where the user tapped "Blade touched steel"
 let pendingIndex = null;
-let bannerTimer = null;                    // hides the "I take that back" banner after a few seconds                   // position (in the saved list) of the cut waiting for its GOOD/ODD answer
+let bannerTimer = null;                    // hides the "I take that back" banner after a few seconds
 
 // ---------- start-up ----------
 /** Fetch model.json; if it is newer than the one in memory, swap it in. Called at start-up and
@@ -42,15 +43,18 @@ async function refreshModel() {
   det = new Detector(model, loadSensitivity());
   $("sensitivity").value = det.sensitivity; $("sens-out").textContent = det.sensitivity.toFixed(2) + "×";
   placeMarks();
-  $("model-info").textContent = `Page ${APP_VERSION}. Numbers calculated from ${model.trained_on.length} good cut(s) on ${model.trained_at.slice(0, 10)}. ` +
-    `Yellow above ${model.thresholds.yellow.toFixed(2)}, red above ${model.thresholds.red.toFixed(2)}.` +
-    (model.breakthrough ? " Blade-through indicator: on." : " Blade-through indicator: not learned yet.") + (model.scorecard && model.scorecard.tapped ? ` Banner check: ${model.scorecard.within_window} of ${model.scorecard.tapped} tapped cuts within 15 s.` : "");
+  $("model-info").textContent = `Page ${APP_VERSION} · model trained ${model.trained_at.slice(0, 10)} on ${model.trained_on.length} good cuts`;
+  const sc = model.scorecard;
+  $("accuracy").textContent = `Current model: alarm lines at ${model.thresholds.yellow.toFixed(2)} (ODD) and ${model.thresholds.red.toFixed(2)} (STOP).` +
+    (sc && sc.tapped ? ` "Coming through" tested on ${sc.tapped} cuts it never heard: ${sc.within_window} within 15 s before the real moment, ` +
+      `${sc.late} late, ${sc.missed} missed, the rest early.` : " The blade-through check has no tested cuts yet.");
   return true;
 }
 
 async function init() {
   await refreshModel();
   if (!("vibrate" in navigator)) $("vibrate-note").textContent = "(not available on iPhone: the screen flashes instead)";
+  applyMode(localStorage.getItem(MODE_KEY) === "1");
   updateSavedCount();
   recoverDraft();
   $("version").textContent = APP_VERSION;
@@ -75,13 +79,18 @@ async function start() {
     $("start").hidden = true; $("stop").hidden = false;
     setState(OFF);
     $("phase").textContent = `Listening (${info.contextRate} Hz${info.resampling ? ", resampled" : ""})`;
-    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+    await keepAwake();
   } catch (err) {
     $("mic-error").hidden = false;
     $("mic-error").textContent = "Microphone problem: " + (err.message || err) +
       (location.protocol !== "https:" && location.hostname !== "localhost" ? " (the page must be opened over https for the mic to work)" : "");
   }
 }
+
+/** The phone sits on the saw for a whole shift: keep the screen on. Browsers drop the wake lock whenever the
+ *  page is hidden (screen lock, app switch), so ask again each time it comes back while listening. */
+async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+document.addEventListener("visibilitychange", () => { if (listening && document.visibilityState === "visible") keepAwake(); });
 
 async function stop() {
   listening = false;
@@ -111,11 +120,12 @@ function onFeatures(f) {
     motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
   if (r.headsUp && currentCut) {                                                     // stage 1: heads-up, no banner
-    $("bt-text").textContent = `Sound is changing (${fmt(currentCut.length * model.audio.hop_s)}): blade may be getting close.`;
+    $("bt-text").textContent = `Sound is changing (${fmt(currentCut.length * model.audio.hop_s)}): the blade may be getting close.`;
   }
   if (r.through && currentCut) {                                                     // stage 2: the page's own guess
     throughGuess = currentCut.length;
-    $("through-banner").textContent = `Sounds like the blade is coming through (${fmt(throughGuess * model.audio.hop_s)}). Still tap the button when YOU hear it come free.`;
+    $("through-banner").textContent = `Blade is coming through (${fmt(throughGuess * model.audio.hop_s)})` +
+      (collecting() ? ". Still tap the button when YOU hear it come free." : "");
     $("through-banner").hidden = false; clearTimeout(bannerTimer);
     if ($("vibrate").checked && navigator.vibrate) navigator.vibrate([200, 100, 200]);
   }
@@ -140,7 +150,7 @@ function onFeatures(f) {
 
 /** The "Blade is through" marker: shown while the motor runs; a tap stamps the time into the cut. */
 function showThrough(visible) {
-  $("through-row").hidden = !visible;
+  $("through-row").hidden = !(visible && collecting());
   if (visible) {
     $("through-note").textContent = "Tap 'touched steel' when the blade starts cutting, and 'through' the moment you hear it come free.";
     $("started").disabled = false;
@@ -174,7 +184,7 @@ function finishCut(startedAt = null, recovered = false) {
   else { pendingIndex = null; downloadCuts([cut], "cut"); alert("Phone storage is full, so this cut was downloaded as a file instead of saved on the phone. Download the saved cuts, then Clear, before the next cut."); }
   currentCut = null; throughAt = null; throughGuess = null; steelAt = null; clearDraft(); updateSavedCount();
   if (!recovered) { const banner = $("cut-banner"); banner.hidden = false; setTimeout(() => (banner.hidden = true), 10000); }
-  if (pendingIndex !== null) openLabelPanel(pendingIndex, recovered ? "Recovered a cut that was never labelled. It is saved. How was it?" : "");
+  if (pendingIndex !== null && collecting()) openLabelPanel(pendingIndex, recovered ? "Recovered a cut that was never labelled. It is saved. How was it?" : "");
 }
 
 /** Show the GOOD/ODD panel for saved cut number i. */
@@ -200,6 +210,17 @@ function recoverDraft() {
   if (!d || !Array.isArray(d.features) || d.features.length < det.motor.minCutWindows) { clearDraft(); return; }
   currentCut = d.features; throughAt = d.throughAt ?? null; throughGuess = d.throughGuess ?? null; steelAt = d.steelAt ?? null;
   finishCut(d.at, true);
+}
+
+/** Operator mode (default): nothing to press but Start; every cut saves itself, unlabelled.
+ *  Data collection mode: the tap buttons and the GOOD/ODD question come back (training data). */
+const collecting = () => document.body.dataset.mode === "collect";
+function applyMode(on) {
+  document.body.dataset.mode = on ? "collect" : "operator";
+  $("collect").checked = on; $("mode-chip").hidden = !on;
+  try { localStorage.setItem(MODE_KEY, on ? "1" : "0"); } catch {}
+  if (!on) $("after-cut").hidden = true;
+  $("through-row").hidden = !(on && motorOnAt !== null);
 }
 
 function alertStop() {
@@ -342,5 +363,7 @@ $("through").onclick = markThrough;
 $("started").onclick = markStarted;
 $("download").onclick = downloadSaved;
 $("clear-saved").onclick = () => { if (confirm("Delete ALL saved cuts on this phone? Download them first if you have not.")) { localStorage.removeItem(SAVED_KEY); pendingIndex = null; $("after-cut").hidden = true; updateSavedCount(); } };
+$("collect").onchange = (e) => applyMode(e.target.checked);
 $("file").onchange = (e) => e.target.files[0] && testFile(e.target.files[0]);
+if (new URLSearchParams(location.search).has("collect")) localStorage.setItem(MODE_KEY, "1");
 init().catch((e) => ($("model-info").textContent = "Could not load model.json: " + e.message));

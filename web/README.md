@@ -1,50 +1,34 @@
-# Saw Sound Meter (phone page)
+# Saw Sound Meter: the phone page
 
-A single web page that listens through the phone's microphone and shows
-**GOOD / ODD / STOP** while the cut-off saw runs. Everything happens on the
-phone; nothing is uploaded anywhere.
+One web page that listens through the phone's microphone and shows **GOOD / ODD / STOP** and the
+cut progress while the saw runs. Everything happens on the phone; nothing is uploaded.
 
-## Try it on the computer first
+## Two modes
+
+- **Operator mode** (default): tap **Start listening** once, lay the phone on the saw, leave it.
+  It notices when the motor starts and stops, judges every cut, and saves each cut's measurements
+  automatically (unlabelled). No other buttons, no questions.
+- **Data collection mode** (Settings, or open the page with `?collect`): adds the
+  "Blade touched steel" / "Blade is through" buttons and asks GOOD or ODD after each cut.
+  This is how I collect training data.
+
+Phones only allow a web page to use the microphone after one tap, so Start is needed once per session.
+The page keeps the screen awake while listening.
+
+## Try it on the computer
 
 ```powershell
-cd "C:\Audio Anomoly Detector LE"
 .venv\Scripts\python -m http.server -d web 8000
 ```
-Open http://localhost:8000 in Chrome or Edge. Scroll to **Test with a recording**
-and pick one of the `.m4a` files in `data/`. You'll see the same timeline the
-Python report draws.
+Open http://localhost:8000, open **Test with a recording** and pick an .m4a from `data/`.
 
-## Put it on the phone (free, via GitHub Pages)
+## Hosting
 
-1. On github.com, create a new **public** repository (e.g. `saw-sound-meter`).
-2. In this project folder (once): `git init`, `git add .`, `git commit -m "Saw sound meter"`,
-   then follow GitHub's "push an existing repository" lines.
-3. In the repository: **Settings → Pages → Build and deployment → Source: Deploy from a branch →
-   Branch: main, folder: /docs** … but our page lives in `web/`, so either rename
-   `web` to `docs`, or (simpler) keep `web/` and set the folder to **/ (root)**
-   and open `https://<you>.github.io/saw-sound-meter/web/`.
-4. Open that address on the phone, tap **Start listening**, allow the microphone,
-   then use the browser's "Add to Home Screen" so it opens like an app.
+The page is plain static files (no server code), so any free static host works. It must be **https**,
+or the phone refuses microphone access. It's on GitHub Pages now. To move it to Vercel, import the
+repository at vercel.com and set **Root Directory** to `web`.
 
-The page must be opened over **https** (GitHub Pages is) or the phone refuses
-microphone access.
+## After changing anything in `web/`
 
-## Using it at the saw
-
-- Lay the phone on the saw housing at the tape mark, screen up, before starting the motor.
-- Grey = motor off or just started (not judging). Green = GOOD. Yellow = ODD, watch it.
-  Red (flashing, vibrating on Android) = STOP and check.
-- After each cut, tap **That cut was GOOD** or **ODD**. The measurements are kept on the phone.
-  Every so often tap **Download as a file** and drop the file into `data/saved_cuts/`
-  so the model can be retrained with more examples.
-- **Sensitivity**: 1.0× uses the lines learned from your good cuts. Raise it if the meter is
-  missing things; lower it if it's nagging during cuts you know are fine.
-
-## Updating the model
-
-After adding recordings to `data/normal/` and rows to `data/runs.csv`:
-```powershell
-.venv\Scripts\python -m src.train
-git add web/model.json; git commit -m "Retrained model"; git push
-```
-The phone picks up the new `model.json` the next time the page is opened online.
+Bump the version in **both** `version.js` and `sw.js` (the test checks they match). The service worker
+caches the page for offline use, and the version badge proves the phone loaded the new code.

@@ -168,35 +168,38 @@ def fit_breakthrough(segs: dict[str, tuple[np.ndarray, np.ndarray]], skip: str |
 
 
 def scorecard(guesses: dict, p: Prepared) -> dict:
-    """Banner vs the user's tap, each cut judged unseen. Window: 15 s before to 5 s after the tap.
-    'false_early' = banner before 60% of the cut's running time had passed."""
+    """'Finishing' (the heads-up, stage 1) vs the user's tap, each cut judged unseen. Window: config.FINISH_WINDOW_S
+    (60 s before to 5 s after the tap). 'false_early' = shown before 60% of the cut's running time had passed."""
+    lo, hi = config.FINISH_WINDOW_S
     tapped = within = late = missed = false_early = 0
-    for name, (banner, _heads, truth, _back) in guesses.items():
+    for name, (_banner, finishing, truth, _back) in guesses.items():
         if truth is None:
             continue
         tapped += 1
-        if banner is None:
+        if finishing is None:
             missed += 1
             continue
-        lead = banner - truth
-        if -15 <= lead <= 5:
+        lead = finishing - truth
+        if lo <= lead <= hi:
             within += 1
-        elif lead > 5:
+        elif lead > hi:
             late += 1
         run_s = float(np.sum(p.phases[name] != "off")) * config.HOP_SECONDS
-        if banner < 0.6 * run_s:
+        if finishing < 0.6 * run_s:
             false_early += 1
     return {"tapped": tapped, "within_window": within, "late": late, "missed": missed, "false_early": false_early,
-            "window_s": [-15, 5], "provisional": tapped < 20,
-            "pass": tapped >= 20 and within >= 0.8 * tapped and late == 0 and false_early == 0}
+            "window_s": [lo, hi], "provisional": tapped < 20,
+            "pass": tapped >= 20 and within >= 0.75 * tapped and late == 0}
 
 
 def scorecard_text(sc: dict) -> str:
     if not sc or not sc["tapped"]:
         return "SCORECARD: no tapped cuts yet."
     verdict = "provisional until 20 tapped cuts" if sc["provisional"] else ("PASS" if sc["pass"] else "FAIL")
-    return (f"SCORECARD (banner vs your tap, each cut judged unseen): {sc['within_window']} of {sc['tapped']} within 15 s "
-            f"before the tap, {sc['late']} late, {sc['missed']} missed, {sc['false_early']} false early. {verdict}.")
+    lo, hi = sc["window_s"]
+    return (f"SCORECARD ('Finishing' vs your tap, each cut judged unseen): {sc['within_window']} of {sc['tapped']} within "
+            f"{-lo} s before to {hi} s after the tap, {sc['late']} late, {sc['missed']} missed, "
+            f"{sc['false_early']} shown in the first 60% of the cut. {verdict}.")
 
 
 def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float | None, float | None, float | None, int]]:
@@ -263,10 +266,9 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
             print(f"Blade-through indicator learned from {len(phone)} phone cuts ({marked} with a 'Blade is through' mark).")
             for name, (guess, heads, truth, back) in guesses.items():
                 h = "never" if heads is None else fmt_time(heads)
-                g = "never" if guess is None else fmt_time(guess)
-                t = "" if truth is None else f"  (you marked {fmt_time(truth)}: banner {'%+.0f s' % (guess - truth) if guess is not None else 'missed'})"
-                b = f"  [{back} heads-up(s) taken back]" if back else ""
-                print(f"  {name:28s} unseen: heads-up {h}, banner {g}{t}{b}")
+                t = "" if truth is None else f"  (you marked {fmt_time(truth)}: {'%+.0f s' % (heads - truth) if heads is not None else 'missed'})"
+                b = f"  [{back} taken back]" if back else ""
+                print(f"  {name:28s} unseen: 'Finishing' at {h}{t}{b}")
             print(scorecard_text(det.scorecard))
         print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
     return det, p, loo

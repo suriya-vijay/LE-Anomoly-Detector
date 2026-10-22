@@ -1,7 +1,7 @@
 // Tiny offline cache so the page opens even with no signal in the lab.
 // Network first for everything: the phone always gets the newest page when it has signal,
 // and falls back to the cached copy when it does not. VERSION must match web/version.js.
-const VERSION = "v7";
+const VERSION = "v8";
 const CACHE = "sawmeter-" + VERSION;
 const FILES = ["./", "./index.html", "./style.css", "./app.js", "./audio.js", "./features.js", "./detector.js",
   "./version.js", "./icon.svg", "./manifest.webmanifest"];

@@ -13,9 +13,9 @@ So I built a free tool that runs on a phone. You lay the phone on the saw, tap S
 It listens to every cut and shows:
 
 - **GOOD / ODD / STOP**: a big color screen that turns yellow when the sound is unusual and flashes
-  red (and vibrates) when it's far from normal.
+  red (and vibrates) when it stays far from normal for 6 seconds.
 - **Cut progress**: a bar that fills as the sound changes near the end of the cut, then a
-  "Blade is coming through" banner.
+  "Finishing: blade nearly through" message.
 
 No audio is recorded or uploaded. The phone only keeps measurements of the sound.
 
@@ -35,12 +35,14 @@ distance that knows which measurements usually move together (Mahalanobis distan
 model that was trained *without* it (leave-one-out). That way the lines reflect how the model treats a cut
 it has never heard, which is the real situation in the lab. I use the median plus a robust spread so one
 odd recording can't move the lines much. There's also a plain rule anyone can check: STOP if the cut gets
-6 dB louder than its own first minute.
+6 dB louder than its own first minute. A STOP only shows once it has lasted 6 seconds with the motor still
+running (yellow until then), so the motor winding down after switch-off doesn't flash STOP.
 
 4. When the blade gets through the steel, the sound gets a little quieter and
 brighter. I used my "Blade is through" taps to learn one direction in the 70-number space that separates
 "in the steel" from "through" (a linear classifier). Each cut is compared with its *own* earlier sound,
-not a fixed level, because where the phone sits changes all the numbers.
+not a fixed level, because where the phone sits changes all the numbers. The change is a slow slide over the
+last 20-60 seconds, so the page says "Finishing" when the slide starts instead of naming the exact second.
 
 5. Training is in Python. The phone page runs the same
 feature maths and model in JavaScript. A test runs both on the same data and checks that they agree.

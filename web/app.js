@@ -25,7 +25,7 @@ let currentCut = null;                     // features of the cut in progress (f
 let live = [];                             // recent {t, score, verdict} for the live timeline
 let t0 = 0, motorOnAt = null;
 let throughAt = null;                      // window index (since motor on) where the user tapped "Blade is through"
-let throughGuess = null;                   // window index where the page's own indicator fired
+let throughGuess = null;                   // window index where the page showed "Finishing"
 let steelAt = null;                        // window index (since motor on) where the user tapped "Blade touched steel"
 let pendingIndex = null;
 let bannerTimer = null;                    // hides the "I take that back" banner after a few seconds
@@ -44,10 +44,6 @@ async function refreshModel() {
   $("sensitivity").value = det.sensitivity; $("sens-out").textContent = det.sensitivity.toFixed(2) + "×";
   placeMarks();
   $("model-info").textContent = `Page ${APP_VERSION} · model trained ${model.trained_at.slice(0, 10)} on ${model.trained_on.length} good cuts`;
-  const sc = model.scorecard;
-  $("accuracy").textContent = `Current model: alarm lines at ${model.thresholds.yellow.toFixed(2)} (ODD) and ${model.thresholds.red.toFixed(2)} (STOP).` +
-    (sc && sc.tapped ? ` "Coming through" tested on ${sc.tapped} cuts it never heard: ${sc.within_window} within 15 s before the real moment, ` +
-      `${sc.late} late, ${sc.missed} missed, the rest early.` : " The blade-through check has no tested cuts yet.");
   return true;
 }
 
@@ -119,14 +115,14 @@ function onFeatures(f) {
     if (r.cutDone) finishCut(); else { currentCut = null; clearDraft(); }            // too short to be a cut
     motorOnAt = null; showThrough(false); $("through-banner").hidden = true;
   }
-  if (r.headsUp && currentCut) {                                                     // stage 1: heads-up, no banner
-    $("bt-text").textContent = `Sound is changing (${fmt(currentCut.length * model.audio.hop_s)}): the blade may be getting close.`;
-  }
-  if (r.through && currentCut) {                                                     // stage 2: the page's own guess
+  // "Finishing" shows as soon as the sound starts to change (stage 1). It usually comes 0-60 s before the blade is
+  // fully through: the sound slides over the last part of the cut, so it cannot name the exact second.
+  if (r.headsUp && currentCut) {
     throughGuess = currentCut.length;
-    $("through-banner").textContent = `Blade is coming through (${fmt(throughGuess * model.audio.hop_s)})` +
+    $("through-banner").textContent = `Finishing: blade nearly through (${fmt(throughGuess * model.audio.hop_s)})` +
       (collecting() ? ". Still tap the button when YOU hear it come free." : "");
     $("through-banner").hidden = false; clearTimeout(bannerTimer);
+    $("bt-text").textContent = "The sound has changed the way it does near the end of a cut.";
     if ($("vibrate").checked && navigator.vibrate) navigator.vibrate([200, 100, 200]);
   }
   if (r.retracted && currentCut) {                                                   // ... taken back
@@ -138,7 +134,7 @@ function onFeatures(f) {
   $("bt-fill").style.width = Math.round((r.progress || 0) * 100) + "%";
 
   setState(r.phase === RUNNING ? r.verdict : r.phase);
-  if (r.loud) $("hint").textContent = `Much louder than this cut's own first minute (${model.thresholds.loud_rise_db} dB up). Stop and check.`;
+  if (r.loud && r.verdict === STOP) $("hint").textContent = `Much louder than this cut's own first minute (${model.thresholds.loud_rise_db} dB up). Stop and check.`;
   $("score").textContent = r.score.toFixed(2);
   $("bar-fill").style.width = Math.min(100, (r.score / (det.red * 1.4)) * 100) + "%";
   $("clock").textContent = motorOnAt === null ? "" : "motor on " + fmt(t - motorOnAt);

@@ -102,7 +102,6 @@ input[type=file] { color: var(--muted); margin-top: 6px; }
 .saved-list .del { margin-left: auto; }
 
 .about p { color: #cfd5e0; line-height: 1.5; margin: 10px 0; }
-.accuracy { padding: 10px 12px; border-radius: 10px; background: var(--card-2); }
 .small { font-size: .85rem; color: var(--muted); }
 .error { margin-top: 10px; padding: 12px; border-radius: 12px; background: #3a1512; color: #ffb4ab; border: 1px solid #5c1f1a; }
 footer { margin: 16px 0 8px; text-align: center; }

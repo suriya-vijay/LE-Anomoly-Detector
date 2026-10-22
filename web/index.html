@@ -103,7 +103,7 @@
       <span class="small">Higher = stricter (more alerts). <button id="sens-reset" class="link">Reset to 1.0×</button></span>
     </label>
     <div class="toggles">
-      <label class="switch"><input id="vibrate" type="checkbox" checked><span>Vibrate on STOP and on "coming through" <span class="small" id="vibrate-note"></span></span></label>
+      <label class="switch"><input id="vibrate" type="checkbox" checked><span>Vibrate on STOP and on "Finishing" <span class="small" id="vibrate-note"></span></span></label>
       <label class="switch"><input id="beep" type="checkbox"><span>Beep on STOP</span></label>
       <label class="switch"><input id="collect" type="checkbox"><span>Data collection mode
         <span class="small">Shows the "touched steel" / "through" buttons and asks GOOD or ODD after each cut. Only needed when collecting training data.</span></span></label>
@@ -123,8 +123,8 @@
     <div class="about">
       <p>The phone measures the saw's sound 2 times a second (70 numbers each time: loudness, pitch, brightness, rhythm and a 64-band frequency picture). Nothing is recorded or uploaded.</p>
       <p><b>GOOD / ODD / STOP</b> compares each measurement with what good cuts on this saw sounded like. It learned only from good cuts, so it flags anything far from normal, including faults it has never seen.</p>
-      <p><b>Cut progress</b> watches for the change in sound as the blade comes through the steel: a little quieter and brighter. "Coming through" shows once the change holds for 20 seconds.</p>
-      <p id="accuracy" class="accuracy"></p>
+      <p><b>STOP</b> shows only when the sound stays far from normal for 6 seconds with the motor running (yellow until then). This stops the motor winding down after switch-off from showing as STOP.</p>
+      <p><b>Cut progress</b> watches for the change in sound near the end of a cut: a little quieter and brighter. "Finishing" shows once the change holds for 15 seconds. It usually comes up to a minute before the blade is fully through.</p>
     </div>
   </details>
 

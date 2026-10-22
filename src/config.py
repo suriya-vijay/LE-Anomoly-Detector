@@ -34,6 +34,8 @@ SMOOTH_WINDOWS = 3        # scores are averaged over this many windows (1.5 s)
 YELLOW_PERCENTILE = 99.0
 RED_PERCENTILE = 99.9
 RED_AFTER_YELLOW_SECONDS = 3.0
+STOP_CONFIRM_SECONDS = 6.0  # a STOP shows only once its reason has stood this long with the motor still running (yellow until then):
+                            # the motor winding down after switch-off read as STOP for 1-5 s on cuts 13/20/23/24; the real fault (cut 11) lasted 15 s
 RED_MIN_RATIO = 1.25      # red is never closer than 25% above yellow (matters with few recordings)
 LINE_SPREAD_SDS = 1.0     # yellow = median of the per-cut 99th percentiles + this many robust (MAD) SDs of them;
                           # a pooled percentile let a few quiet cuts drag the line down (2026-10-15: 6 of 14 good cuts STOP unseen)
@@ -60,5 +62,8 @@ BT_QUIET_REF_WINDOWS = 120  # ... its median over the 60 s before that (cut 15: 
 BT_STAGE2_HOLD_WINDOWS = 10  # banner ("coming through"): the heads-up must stand AND stay quieter for 5 s more
 BT_BRIGHT_PCT = 0.0         # optional banner gate: 10 s brightness this fraction above the previous minute (0 = off;
                             # 3% fixed cut 15 but lost cuts 12 and 14 on 2026-10-15, 2% changed nothing)
+FINISH_WINDOW_S = (-60, 5)   # scorecard target (fixed 2026-10-22 before cuts 28+): 'Finishing' shows 0-60 s before the user's
+                            # 'through' tap, never more than 5 s after. The sound slides over the last 20-60 s, so an exact
+                            # 15 s target was out of reach (rule 7/21, learned model ~9/19); this one: 15 of 21 unseen
 BT_PROGRESS_SPAN = 1.5      # the page's progress bar is full when the load is this far above the cut's own low
 BT_TAIL_WINDOWS = 30        # without a user mark: the last 15 s before motor-off count as "through"

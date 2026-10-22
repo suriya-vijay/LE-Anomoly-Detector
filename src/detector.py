@@ -88,15 +88,18 @@ class SawDetector:
     def verdicts(self, scores: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None) -> np.ndarray:
         """Per window: "off" (not judged), "good", "odd" or "stop". STOP when the score crosses red, when it
         sits over yellow for RED_AFTER_YELLOW_SECONDS, or (when rms is given) when the cut gets LOUD_RISE_DB
-        louder than its own first minute for LOUD_RISE_HOLD_SECONDS: the plain 'too loud' rule."""
+        louder than its own first minute for LOUD_RISE_HOLD_SECONDS: the plain 'too loud' rule. A STOP reason
+        must stand for STOP_CONFIRM_SECONDS before STOP shows (ODD until then), so the few seconds of the motor
+        winding down after switch-off never flash STOP."""
         red_run = int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))
+        confirm = stop_confirm_windows()
         loud_hold, base_n, sm_n = loud_windows()
         out = np.full(len(scores), OFF, dtype=object)
-        odd_streak = loud_streak = 0
+        odd_streak = loud_streak = stop_streak = 0
         base: list[float] = []; sm: list[float] = []
         for i, (s, p) in enumerate(zip(scores, phases)):
             if p != RUNNING:
-                odd_streak = loud_streak = 0; base = []; sm = []
+                odd_streak = loud_streak = stop_streak = 0; base = []; sm = []
                 continue
             odd_streak = odd_streak + 1 if s > self.yellow else 0
             loud = False
@@ -108,7 +111,9 @@ class SawDetector:
                     float(np.mean(sm)) > float(np.median(base)) + config.LOUD_RISE_DB
                 loud_streak = loud_streak + 1 if over else 0
                 loud = loud_streak >= loud_hold
-            out[i] = STOP if (s > self.red or odd_streak >= red_run or loud) else ODD if s > self.yellow else GOOD
+            stop = s > self.red or odd_streak >= red_run or loud
+            stop_streak = stop_streak + 1 if stop else 0
+            out[i] = STOP if stop_streak > confirm else ODD if (stop or s > self.yellow) else GOOD
         return out
 
     # ----- saving / loading (one JSON format for Python and the phone) -----
@@ -134,6 +139,7 @@ class SawDetector:
                           "source": c.get("source", "all")} for c in self.clusters],
             "thresholds": {"yellow": self.yellow, "red": self.red,
                            "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS)),
+                           "stop_confirm_windows": stop_confirm_windows(),
                            "loud_rise_db": config.LOUD_RISE_DB, "loud_hold_windows": loud_windows()[0],
                            "loud_base_windows": loud_windows()[1], "loud_smooth_windows": loud_windows()[2],
                            "by_source": {k: {"yellow": y, "red": r} for k, (y, r) in self.thresholds_by_source.items()}},
@@ -175,6 +181,10 @@ class SawDetector:
     @classmethod
     def load(cls, path: str | Path) -> "SawDetector":
         return cls.from_dict(json.loads(Path(path).read_text()))
+
+
+def stop_confirm_windows() -> int:
+    return int(round(config.STOP_CONFIRM_SECONDS / config.HOP_SECONDS))
 
 
 def loud_windows() -> tuple[int, int, int]:

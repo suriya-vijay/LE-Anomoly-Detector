@@ -55,7 +55,8 @@ def test_json_round_trip_gives_identical_scores(runs, tmp_path):
     assert len(d["mel"]) == config.N_MELS and all(len(m["weights"]) > 0 for m in d["mel"])
 
 
-def test_verdict_rules():
+def test_verdict_rules(monkeypatch):
+    monkeypatch.setattr(config, "STOP_CONFIRM_SECONDS", 0.0)        # the instant rules; the wait is tested below
     det = SawDetector()
     det.yellow, det.red = 3.0, 5.0
     red_run = int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))
@@ -68,7 +69,8 @@ def test_verdict_rules():
     assert v[-1] == GOOD
 
 
-def test_too_loud_rule():
+def test_too_loud_rule(monkeypatch):
+    monkeypatch.setattr(config, "STOP_CONFIRM_SECONDS", 0.0)
     from src.detector import loud_windows
     hold, base_n, sm_n = loud_windows()
     det = SawDetector()
@@ -87,6 +89,25 @@ def test_too_loud_rule():
     small = flat.copy(); small[base_n:] = -20.0 + config.LOUD_RISE_DB - 1  # 5 dB louder is still cutting
     assert set(det.verdicts(scores, phases, small)) == {GOOD}
     assert set(det.verdicts(scores, phases)) == {GOOD}                     # no loudness given: rule off
+
+
+def test_stop_waits_for_confirmation():
+    """A STOP reason shows yellow first; STOP only once it has stood STOP_CONFIRM_SECONDS with the motor running.
+    A short burst that ends with the motor stopping (winding down after switch-off) never shows STOP."""
+    from src.detector import stop_confirm_windows
+    n = stop_confirm_windows()
+    assert n > 0
+    det = SawDetector()
+    det.yellow, det.red = 3.0, 5.0
+    scores = np.array([1.0] * 5 + [6.0] * (n + 3) + [1.0] * 3)
+    phases = np.array([RUNNING] * len(scores), dtype=object)
+    v = det.verdicts(scores, phases)
+    assert set(v[5:5 + n]) == {ODD}                                        # waiting: yellow
+    assert set(v[5 + n:5 + n + 3]) == {STOP}                               # still there after the wait: STOP
+    assert v[-1] == GOOD
+    short = np.array([1.0] * 5 + [6.0] * (n - 2) + [6.0] * 3)               # motor goes off before the wait is over
+    ph = np.array([RUNNING] * (5 + n - 2) + [OFF] * 3, dtype=object)
+    assert STOP not in set(det.verdicts(short, ph))
 
 
 def test_smooth_is_trailing():

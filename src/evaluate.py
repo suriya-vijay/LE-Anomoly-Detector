@@ -122,13 +122,12 @@ def _print_breakthrough(p, det) -> None:
     if not guesses:
         return
     print("\nBLADE-THROUGH INDICATOR (each phone cut judged by a model that never saw it)")
-    for name, (guess, heads, truth, back) in guesses.items():
-        h = "no heads-up" if heads is None else f"heads-up at {fmt_time(heads)}"
-        g = "banner never shown" if guess is None else f"banner at {fmt_time(guess)} after motor-on"
-        t = ("  <- you marked " + fmt_time(truth) + (f", so the banner was {guess - truth:+.0f} s" if guess is not None else ", so it missed")) \
+    for name, (_banner, heads, truth, back) in guesses.items():
+        h = "'Finishing' never shown" if heads is None else f"'Finishing' at {fmt_time(heads)} after motor-on"
+        t = ("  <- you marked " + fmt_time(truth) + (f", so it was {heads - truth:+.0f} s" if heads is not None else ", so it missed")) \
             if truth is not None else "  (no mark from you to check against)"
-        b = f"  [{back} heads-up(s) taken back]" if back else ""
-        print(f"- {name}: {h}, {g}{t}{b}")
+        b = f"  [{back} taken back]" if back else ""
+        print(f"- {name}: {h}{t}{b}")
     print(scorecard_text(scorecard(guesses, p)))
 
 

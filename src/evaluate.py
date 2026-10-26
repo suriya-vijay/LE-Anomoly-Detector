@@ -26,7 +26,7 @@ COLOURS = {OFF: "#9e9e9e", GOOD: "#2e7d32", ODD: "#f9a825", STOP: "#c62828"}
 
 
 def evaluate(root: Path = ROOT, verbose: bool = True, plot_path: Path = REPORT_PATH) -> list[dict]:
-    det, p, _ = train(root, verbose=False)
+    det, p, _ = train(root, verbose=False, save=False)   # a report must never change the live model
     loo_models = leave_one_out_models(p)
     by_source = thresholds_by_source(leave_one_out_scores(p, loo_models), p)
     web = by_source[web_source(by_source)]

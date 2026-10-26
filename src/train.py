@@ -226,7 +226,8 @@ def breakthrough_guesses(p: Prepared, det: SawDetector) -> dict[str, tuple[float
     return out
 
 
-def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepared, dict[str, np.ndarray]]:
+def train(root: Path = ROOT, verbose: bool = True, save: bool = True) -> tuple[SawDetector, Prepared, dict[str, np.ndarray]]:
+    """save=False: report only; the model files (and so the phone page) stay as they are."""
     p = prepare(root, verbose)
     loo = leave_one_out_scores(p)
     by_source = thresholds_by_source(loo, p)
@@ -245,7 +246,8 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
     det.breakthrough = fit_breakthrough(breakthrough_segments(p, det, phone))
     guesses = breakthrough_guesses(p, det) if det.breakthrough is not None else {}
     det.scorecard = scorecard(guesses, p)
-    det.save(MODEL_PATH, WEB_MODEL_PATH)
+    if save:
+        det.save(MODEL_PATH, WEB_MODEL_PATH)
     if verbose:
         n = len(p.train_runs)
         typical = float(np.median(np.concatenate(list(loo.values()))))
@@ -270,7 +272,8 @@ def train(root: Path = ROOT, verbose: bool = True) -> tuple[SawDetector, Prepare
                 b = f"  [{back} taken back]" if back else ""
                 print(f"  {name:28s} unseen: 'Finishing' at {h}{t}{b}")
             print(scorecard_text(det.scorecard))
-        print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
+        if save:
+            print(f"Saved {MODEL_PATH.relative_to(root)} and {WEB_MODEL_PATH.relative_to(root)}.")
     return det, p, loo
 
 

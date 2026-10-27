@@ -36,7 +36,8 @@ model that was trained *without* it (leave-one-out). That way the lines reflect 
 it has never heard, which is the real situation in the lab. I use the median plus a robust spread so one
 odd recording can't move the lines much. There's also a plain rule anyone can check: STOP if the cut gets
 6 dB louder than its own first minute. A STOP only shows once it has lasted 6 seconds with the motor still
-running (yellow until then), so the motor winding down after switch-off doesn't flash STOP.
+running (yellow until then), so the motor winding down after switch-off doesn't flash STOP. STOP needs the
+meter past the red line or the too-loud rule; a cut that's just a little odd for a long time stays yellow.
 
 4. When the blade gets through the steel, the sound gets a little quieter and
 brighter. I used my "Blade is through" taps to learn one direction in the 70-number space that separates

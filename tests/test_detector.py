@@ -59,13 +59,13 @@ def test_verdict_rules(monkeypatch):
     monkeypatch.setattr(config, "STOP_CONFIRM_SECONDS", 0.0)        # the instant rules; the wait is tested below
     det = SawDetector()
     det.yellow, det.red = 3.0, 5.0
-    red_run = int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))
-    scores = np.array([1, 4, 1, 6, 1] + [4] * red_run + [1])
+    long_odd = int(round(60 / config.HOP_SECONDS))
+    scores = np.array([1, 4, 1, 6, 1] + [4] * long_odd + [1])
     phases = np.array([RUNNING] * len(scores), dtype=object)
     phases[2] = OFF
     v = det.verdicts(scores, phases)
     assert list(v[:5]) == [GOOD, ODD, OFF, STOP, GOOD]
-    assert v[5 + red_run - 1] == STOP and v[5] == ODD  # odd for 3 s in a row becomes stop
+    assert set(v[5:5 + long_odd]) == {ODD}             # a minute over yellow but under red stays ODD (cut 28)
     assert v[-1] == GOOD
 
 

@@ -33,7 +33,8 @@ SMOOTH_WINDOWS = 3        # scores are averaged over this many windows (1.5 s)
 # Alert thresholds, as percentiles of normal scores (set during training)
 YELLOW_PERCENTILE = 99.0
 RED_PERCENTILE = 99.9
-RED_AFTER_YELLOW_SECONDS = 3.0
+                          # (no 'yellow held N s = STOP' rule since 2026-10-27: it caught no real fault, cut 11 is caught
+                          # by the too-loud rule, and it gave good cuts 16 and 28 a STOP while the score never reached red)
 STOP_CONFIRM_SECONDS = 6.0  # a STOP shows only once its reason has stood this long with the motor still running (yellow until then):
                             # the motor winding down after switch-off read as STOP for 1-5 s on cuts 13/20/23/24; the real fault (cut 11) lasted 15 s
 RED_MIN_RATIO = 1.25      # red is never closer than 25% above yellow (matters with few recordings)

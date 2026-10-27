@@ -15,7 +15,6 @@ export class Detector {
     this.clusters = model.clusters;
     this.n = this.idx.length;
     this.smoothK = model.smooth_windows;
-    this.redAfterYellow = model.thresholds.red_after_yellow_windows;
     this.stopConfirm = model.thresholds.stop_confirm_windows || 0;   // a STOP reason must stand this long (yellow until then)
     const t = model.thresholds;
     this.loud = { db: t.loud_rise_db || 0, hold: t.loud_hold_windows || 0, base: t.loud_base_windows || 0, smooth: t.loud_smooth_windows || 0 };
@@ -34,7 +33,7 @@ export class Detector {
     this.red = this.model.thresholds.red / s;
   }
 
-  reset() { this._recent = []; this._oddStreak = 0; this._stopStreak = 0; this._loud = new LoudRise(this.loud); this.motor = new MotorTracker(this.model); this.bt?.reset(); }
+  reset() { this._recent = []; this._stopStreak = 0; this._loud = new LoudRise(this.loud); this.motor = new MotorTracker(this.model); this.bt?.reset(); }
 
   /** Standardised feature vector (the space the clusters and the break-through direction live in). */
   standardise(f) {
@@ -74,11 +73,10 @@ export class Detector {
     const { phase, cutDone } = this.motor.push(f[this.iRms], f[this.iPulse]);
     let verdict = OFF, loud = false;
     if (phase !== RUNNING) {
-      this._oddStreak = 0; this._stopStreak = 0; this._loud.reset();
+      this._stopStreak = 0; this._loud.reset();
     } else {
-      this._oddStreak = score > this.yellow ? this._oddStreak + 1 : 0;
       loud = this._loud.push(f[this.iRms]);
-      const stop = score > this.red || this._oddStreak >= this.redAfterYellow || loud;
+      const stop = score > this.red || loud;   // long yellow under red stays ODD
       this._stopStreak = stop ? this._stopStreak + 1 : 0;
       verdict = this._stopStreak > this.stopConfirm ? STOP : (stop || score > this.yellow) ? ODD : GOOD;
     }
@@ -98,12 +96,11 @@ export class Detector {
     });
     const phases = labelPhasesOffline(featureList, this.model, this.iRms, this.iPulse);
     const verdicts = [];
-    let streak = 0, stopStreak = 0; const lr = new LoudRise(this.loud);
+    let stopStreak = 0; const lr = new LoudRise(this.loud);
     for (let i = 0; i < scores.length; i++) {
-      if (phases[i] !== RUNNING) { streak = 0; stopStreak = 0; lr.reset(); verdicts.push(OFF); continue; }
-      streak = scores[i] > this.yellow ? streak + 1 : 0;
+      if (phases[i] !== RUNNING) { stopStreak = 0; lr.reset(); verdicts.push(OFF); continue; }
       const loud = lr.push(featureList[i][this.iRms]);
-      const stop = scores[i] > this.red || streak >= this.redAfterYellow || loud;
+      const stop = scores[i] > this.red || loud;
       stopStreak = stop ? stopStreak + 1 : 0;
       verdicts.push(stopStreak > this.stopConfirm ? STOP : (stop || scores[i] > this.yellow) ? ODD : GOOD);
     }

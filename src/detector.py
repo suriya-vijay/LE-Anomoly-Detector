@@ -1,18 +1,4 @@
-"""Step 4b: the detector. "How far is this second of sound from normal?"
-
-Plain language:
-  1. From the good cuts, find a few "kinds of normal" (for example, the first
-     minute of a cut sounds a little different from the steady middle part).
-  2. For each kind, learn the typical value of every measurement, how much it
-     normally wobbles, and which measurements move together.
-  3. A new second of sound gets a score: its distance to the *nearest* kind of
-     normal, in units of "normal wobble". About 1-2 is typical. Big = weird.
-  4. Yellow and red lines on that score are set from good cuts the model had
-     never heard (see train.py), so "odd" means "stranger than 99% of good sound".
-
-No neural network: this is plain statistics (k-means + a shrunk covariance),
-which stays stable with only a handful of recordings and can be explained.
-"""
+"""The detector learns a few "kinds of normal" from my good cuts and scores every half second by how far it is from the closest one, so a big score means the saw sounds weird (just statistics, no neural network)."""
 from __future__ import annotations
 
 import datetime as dt
@@ -86,22 +72,20 @@ class SawDetector:
         return smooth(self.raw_scores(features))
 
     def verdicts(self, scores: np.ndarray, phases: np.ndarray, rms: np.ndarray | None = None) -> np.ndarray:
-        """Per window: "off" (not judged), "good", "odd" or "stop". STOP when the score crosses red, when it
-        sits over yellow for RED_AFTER_YELLOW_SECONDS, or (when rms is given) when the cut gets LOUD_RISE_DB
-        louder than its own first minute for LOUD_RISE_HOLD_SECONDS: the plain 'too loud' rule. A STOP reason
-        must stand for STOP_CONFIRM_SECONDS before STOP shows (ODD until then), so the few seconds of the motor
-        winding down after switch-off never flash STOP."""
-        red_run = int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS))
+        """Per window: "off" (not judged), "good", "odd" or "stop". STOP when the score crosses red or (when rms
+        is given) when the cut gets LOUD_RISE_DB louder than its own first minute for LOUD_RISE_HOLD_SECONDS: the
+        plain 'too loud' rule. A long stretch over yellow but under red stays ODD. A STOP reason must stand for
+        STOP_CONFIRM_SECONDS before STOP shows (ODD until then), so the few seconds of the motor winding down
+        after switch-off never flash STOP."""
         confirm = stop_confirm_windows()
         loud_hold, base_n, sm_n = loud_windows()
         out = np.full(len(scores), OFF, dtype=object)
-        odd_streak = loud_streak = stop_streak = 0
+        loud_streak = stop_streak = 0
         base: list[float] = []; sm: list[float] = []
         for i, (s, p) in enumerate(zip(scores, phases)):
             if p != RUNNING:
-                odd_streak = loud_streak = stop_streak = 0; base = []; sm = []
+                loud_streak = stop_streak = 0; base = []; sm = []
                 continue
-            odd_streak = odd_streak + 1 if s > self.yellow else 0
             loud = False
             if rms is not None and config.LOUD_RISE_DB > 0:
                 if len(base) < base_n:
@@ -111,7 +95,7 @@ class SawDetector:
                     float(np.mean(sm)) > float(np.median(base)) + config.LOUD_RISE_DB
                 loud_streak = loud_streak + 1 if over else 0
                 loud = loud_streak >= loud_hold
-            stop = s > self.red or odd_streak >= red_run or loud
+            stop = s > self.red or loud
             stop_streak = stop_streak + 1 if stop else 0
             out[i] = STOP if stop_streak > confirm else ODD if (stop or s > self.yellow) else GOOD
         return out
@@ -138,7 +122,6 @@ class SawDetector:
             "clusters": [{"mean": c["mean"].tolist(), "precision": c["precision"].tolist(), "n_windows": c["n_windows"],
                           "source": c.get("source", "all")} for c in self.clusters],
             "thresholds": {"yellow": self.yellow, "red": self.red,
-                           "red_after_yellow_windows": int(round(config.RED_AFTER_YELLOW_SECONDS / config.HOP_SECONDS)),
                            "stop_confirm_windows": stop_confirm_windows(),
                            "loud_rise_db": config.LOUD_RISE_DB, "loud_hold_windows": loud_windows()[0],
                            "loud_base_windows": loud_windows()[1], "loud_smooth_windows": loud_windows()[2],

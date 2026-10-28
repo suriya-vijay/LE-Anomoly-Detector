@@ -31,6 +31,8 @@ class SavedCut:
     started_at_s: float | None   # seconds after motor-on when the user tapped "Blade touched steel" (None if not tapped)
     features: np.ndarray   # (n_windows, n_features)
     train: bool = True     # False keeps a GOOD cut out of learning "normal" (e.g. loud shop noises in it)
+    use_from_s: float = 0.0          # like runs.csv: ignore the recording before / after these times
+    use_until_s: float | None = None # (e.g. the phone was still sliding about for the first 40 s)
 
 
 def load_saved_cuts(root: str | Path, verbose: bool = False) -> list[SavedCut]:
@@ -58,7 +60,8 @@ def load_saved_cuts(root: str | Path, verbose: bool = False) -> list[SavedCut]:
                 duration_s=float(c.get("duration_s", len(feats) * config.HOP_SECONDS)),
                 through_at_s=None if c.get("through_at_s") is None else float(c["through_at_s"]),
                 started_at_s=None if c.get("started_at_s") is None else float(c["started_at_s"]), features=feats,
-                train=bool(c.get("train", True))))
+                train=bool(c.get("train", True)), use_from_s=float(c.get("use_from_s", 0.0)),
+                use_until_s=None if c.get("use_until_s") is None else float(c["use_until_s"])))
     if verbose:
         print(f"{len(cuts)} saved cut(s) from the phone in {folder}:")
         for c in cuts:
